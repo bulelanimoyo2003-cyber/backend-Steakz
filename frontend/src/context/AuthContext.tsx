@@ -32,7 +32,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(JSON.parse(storedUser) as AuthUser);
     } else {
       localStorage.removeItem('steakz_token');
-      localStorage.removeItem('steakz_user');   
+      localStorage.removeItem('steakz_user');
+      setToken(null);
+      setUser(null);   
     }
   }, []);
 
