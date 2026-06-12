@@ -17,8 +17,16 @@ import publicRoutes from './routes/publicRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  process.env.FRONTEND_URL
+].filter((origin): origin is string => Boolean(origin));
 
-app.use(cors({ origin: process.env.FRONTEND_URL ?? 'http://localhost:5173' }));
+app.use(cors({ 
+  origin: allowedOrigins
+}));
+  
 app.use(express.json());
 app.use(logger);
 
