@@ -6,9 +6,13 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('steakz_token');
-  if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`;
+  if (!token) return config;
+
+  if (!config.headers) {
+    config.headers = {} as typeof config.headers;
   }
+
+  config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 

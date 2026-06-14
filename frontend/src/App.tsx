@@ -19,8 +19,8 @@ import NotFoundPage from './pages/NotFoundPage';
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
+    <BrowserRouter>
+      <AuthProvider>
         <NavBar />
         <Routes>
           <Route path="/" element={<LandingPage />} />
@@ -87,7 +87,7 @@ export default function App() {
           />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
