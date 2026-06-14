@@ -41,43 +41,63 @@ router.post('/register', async (req: Request, res: Response) => {
   }
 });
 
+// OPTIONS preflight for login (explicitly return CORS headers if needed)
+router.options('/login', (req: Request, res: Response) => {
+  const origin = process.env.FRONTEND_URL ?? 'https://steak-frontend-dx21.onrender.com';
+  res.header('Access-Control-Allow-Origin', origin);
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.sendStatus(204);
+});
+
 router.post('/login', async (req: Request, res: Response) => {
-  const { email, password } = req.body as { email?: string; password?: string };
+  console.log('[Auth] POST /login hit');
+  try {
+    const { email, password } = req.body as { email?: string; password?: string };
 
-  if (!email || !password) {
-    res.status(400).json({ error: 'email and password are required.' });
-    return;
+    if (!email || !password) {
+      console.warn('[Auth] Missing email or password');
+      res.status(400).json({ error: 'email and password are required.' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
+
+    if (!user || !user.isActive) {
+      console.warn('[Auth] Invalid credentials or inactive account for', email);
+      res.status(401).json({ error: 'Invalid credentials or account is inactive.' });
+      return;
+    }
+
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      console.warn('[Auth] Password mismatch for', email);
+      res.status(401).json({ error: 'Invalid credentials or account is inactive.' });
+      return;
+    }
+
+    const token = jwt.sign(
+      { id: user.id, role: user.role, branchId: user.branchId },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN as unknown as jwt.SignOptions['expiresIn'] }
+    );
+
+    console.log('[Auth] Login success for', email);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        branchId: user.branchId,
+      },
+    });
+  } catch (error) {
+    console.error('[Auth] /login error:', error);
+    // Ensure we always return JSON (avoid crashing)
+    res.status(500).json({ error: 'Login failed due to server error.' });
   }
-
-  const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
-
-  if (!user || !user.isActive) {
-    res.status(401).json({ error: 'Invalid credentials or account is inactive.' });
-    return;
-  }
-
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) {
-    res.status(401).json({ error: 'Invalid credentials or account is inactive.' });
-    return;
-  }
-
-  const token = jwt.sign(
-    { id: user.id, role: user.role, branchId: user.branchId },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN as unknown as jwt.SignOptions['expiresIn'] }
-  );
-
-  res.json({
-    token,
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      branchId: user.branchId,
-    },
-  });
 });
 
 router.get('/me', verifyToken, async (req: Request, res: Response) => {
