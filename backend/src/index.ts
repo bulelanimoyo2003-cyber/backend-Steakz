@@ -26,6 +26,7 @@ const frontendUrl = normalizeOrigin(process.env.FRONTEND_URL);
 const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
+  'https://steak-frontend-dx21.onrender.com',
   frontendUrl,
 ].filter((origin): origin is string => Boolean(origin));
 
@@ -60,6 +61,11 @@ app.use('/api/cashier', cashierRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/menu', menuRoutes);
 app.use('/api/public', publicRoutes);
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 const registeredRoutes = [
   '/api/auth',
