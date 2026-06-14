@@ -25,12 +25,15 @@ export default function LoginPage() {
 
     try {
       const { data } = await api.post('/auth/login', { email, password });
+      if (!data?.token || !data?.user) {
+        throw new Error('Invalid server response.');
+      }
       login(data.token, data.user);
       navigate(ROLE_DASH[data.user.role] ?? '/');
     } catch (err: unknown) {
       const message =
-        typeof err === 'object' && err !== null && 'response' in err && (err as any).response?.data?.error
-          ? (err as any).response.data.error
+        typeof err === 'object' && err !== null
+          ? (err as any).response?.data?.error || (err as any).message || 'Sign in failed.'
           : 'Sign in failed.';
       setError(message);
     }

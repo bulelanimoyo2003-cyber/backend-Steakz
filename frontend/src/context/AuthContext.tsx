@@ -1,11 +1,20 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 
 interface AuthUser {
   id: number;
   name: string;
+  email: string;
   role: string;
   branchId: number | null;
+}
+
+function safeParseJson<T>(value: string | null): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
 }
 
 interface AuthContextType {
@@ -20,8 +29,6 @@ const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const navigate = useNavigate();
-  const location = useLocation();
 
   useEffect(() => {
     const storedToken = localStorage.getItem('steakz_token');
@@ -32,9 +39,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('steakz_user');
       setToken(null);
       setUser(null);
-      if (location.pathname !== '/login') {
-        navigate('/login', { replace: true });
-      }
     };
 
     if (!storedToken || !storedUser || storedUser === 'undefined') {
@@ -42,25 +46,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    try {
-      const parsedUser = JSON.parse(storedUser) as AuthUser;
-      if (
-        !parsedUser ||
-        typeof parsedUser !== 'object' ||
-        typeof parsedUser.id !== 'number' ||
-        typeof parsedUser.name !== 'string' ||
-        typeof parsedUser.role !== 'string' ||
-        (typeof parsedUser.branchId !== 'number' && parsedUser.branchId !== null)
-      ) {
-        throw new Error('Invalid stored user.');
-      }
-
-      setToken(storedToken);
-      setUser(parsedUser);
-    } catch {
+    const parsedUser = safeParseJson<AuthUser>(storedUser);
+    if (
+      !parsedUser ||
+      typeof parsedUser !== 'object' ||
+      typeof parsedUser.id !== 'number' ||
+      typeof parsedUser.name !== 'string' ||
+      typeof parsedUser.email !== 'string' ||
+      typeof parsedUser.role !== 'string' ||
+      (typeof parsedUser.branchId !== 'number' && parsedUser.branchId !== null)
+    ) {
       clearAuth();
+      return;
     }
-  }, [location.pathname, navigate]);
+
+    setToken(storedToken);
+    setUser(parsedUser);
+  }, []);
 
   function login(t: string, u: AuthUser) {
     localStorage.setItem('steakz_token', t);
