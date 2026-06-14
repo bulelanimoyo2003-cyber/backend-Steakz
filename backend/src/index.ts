@@ -35,6 +35,16 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
+if (!process.env.FRONTEND_URL) {
+  console.warn('[Backend] FRONTEND_URL is not set. CORS will only allow localhost origins.');
+}
+if (!process.env.JWT_SECRET) {
+  console.warn('[Backend] JWT_SECRET is not set. Using default dev secret.');
+}
+if (!process.env.DATABASE_URL) {
+  console.warn('[Backend] DATABASE_URL is not set.');
+}
+
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
@@ -50,28 +60,18 @@ app.use('/api/customer', customerRoutes);
 app.use('/api/menu', menuRoutes);
 app.use('/api/public', publicRoutes);
 
-app.get('/api/debug/routes', (_req, res) => {
-  const routes: Array<{ method: string; path: string }> = [];
-  const stack = (app as any)._router.stack;
-  stack.forEach((layer: any) => {
-    if (layer.route) {
-      const methods = Object.keys(layer.route.methods)
-        .map((m) => m.toUpperCase())
-        .join(',');
-      routes.push({ method: methods, path: layer.route.path });
-    } else if (layer.name === 'router' && layer.handle && layer.handle.stack) {
-      layer.handle.stack.forEach((nested: any) => {
-        if (nested.route) {
-          const methods = Object.keys(nested.route.methods)
-            .map((m) => m.toUpperCase())
-            .join(',');
-          routes.push({ method: methods, path: `${layer.regexp.source} -> ${nested.route.path}` });
-        }
-      });
-    }
-  });
-  res.json(routes);
-});
+const registeredRoutes = [
+  '/api/auth',
+  '/api/admin',
+  '/api/hq',
+  '/api/branch-manager',
+  '/api/chef',
+  '/api/cashier',
+  '/api/customer',
+  '/api/menu',
+  '/api/public',
+];
+console.log('[Backend] Registered routes:', registeredRoutes.join(', '));
 
 app.use(errorHandler);
 

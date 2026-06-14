@@ -1,13 +1,17 @@
 import axios from 'axios';
 
 function normalizeUrl(value: string | undefined) {
-  return value ? value.replace(/\/+$|^\s+|\s+$/g, '') : undefined;
+  return value ? value.replace(/\/+$/g, '').trim() : undefined;
 }
 
 const envUrl = normalizeUrl(import.meta.env.VITE_API_URL);
-const defaultBase = import.meta.env.DEV ? 'http://localhost:3001' : '/api';
-const apiBaseUrl = envUrl || defaultBase;
+const fallbackProdUrl = 'https://steakz-backend-i50g.onrender.com';
+const apiBaseUrl = envUrl || (import.meta.env.DEV ? 'http://localhost:3001' : fallbackProdUrl);
 const baseURL = apiBaseUrl.endsWith('/api') ? apiBaseUrl : `${apiBaseUrl.replace(/\/+$/, '')}/api`;
+
+if (!envUrl && !import.meta.env.DEV) {
+  console.warn('[Axios] VITE_API_URL is not set in production; using fallback backend URL:', fallbackProdUrl);
+}
 
 const api = axios.create({
   baseURL,
