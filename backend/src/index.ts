@@ -22,10 +22,11 @@ function normalizeOrigin(origin: string | undefined) {
   return origin?.replace(/\/$/, '');
 }
 
+const frontendUrl = normalizeOrigin(process.env.FRONTEND_URL);
 const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
-  normalizeOrigin(process.env.FRONTEND_URL),
+  frontendUrl,
 ].filter((origin): origin is string => Boolean(origin));
 
 const corsOptions = {
@@ -36,7 +37,7 @@ const corsOptions = {
 };
 
 if (!process.env.FRONTEND_URL) {
-  console.warn('[Backend] FRONTEND_URL is not set. CORS will only allow localhost origins.');
+  console.warn('[Backend] FRONTEND_URL is not set. CORS will allow localhost origins.');
 }
 if (!process.env.JWT_SECRET) {
   console.warn('[Backend] JWT_SECRET is not set. Using default dev secret.');

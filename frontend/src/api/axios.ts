@@ -5,7 +5,7 @@ function normalizeUrl(value: string | undefined) {
 }
 
 const envUrl = normalizeUrl(import.meta.env.VITE_API_URL);
-const fallbackProdUrl = 'https://steakz-backend-i50g.onrender.com';
+const fallbackProdUrl = 'https://steakz-backend-i5qe.onrender.com';
 const apiBaseUrl = envUrl || (import.meta.env.DEV ? 'http://localhost:3001' : fallbackProdUrl);
 const baseURL = apiBaseUrl.endsWith('/api') ? apiBaseUrl : `${apiBaseUrl.replace(/\/+$/, '')}/api`;
 
@@ -19,7 +19,7 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('steakz_token');
-  if (!token) return config;
+  if (!token || token === 'undefined') return config;
 
   if (!config.headers) {
     config.headers = {} as typeof config.headers;
