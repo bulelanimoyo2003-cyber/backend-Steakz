@@ -47,7 +47,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.op
 app.use(express.json());
 app.use(logger);
 
