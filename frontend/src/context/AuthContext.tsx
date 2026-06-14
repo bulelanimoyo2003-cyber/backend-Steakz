@@ -23,19 +23,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const storedToken = localStorage.getItem('steakz_token');
     const storedUser = localStorage.getItem('steakz_user');
-    if (
-      storedToken &&
-      storedUser &&
-      storedUser !== 'undefined'
-    ) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser) as AuthUser);
-    } else {
-      localStorage.removeItem('steakz_token');
-      localStorage.removeItem('steakz_user');
-      setToken(null);
-      setUser(null);   
-    }
+    if (storedToken && storedUser && storedUser !== 'undefined') {
+  try {
+    setToken(storedToken);
+    setUser(JSON.parse(storedUser) as AuthUser);
+  } catch {
+    localStorage.removeItem('steakz_token');
+    localStorage.removeItem('steakz_user');
+    setToken(null);
+    setUser(null);
+  }
+} else {
+  localStorage.removeItem('steakz_token');
+  localStorage.removeItem('steakz_user');
+  setToken(null);
+  setUser(null);
+}
   }, []);
 
   function login(t: string, u: AuthUser) {
