@@ -103,19 +103,8 @@ export default function MenuPage() {
       const resp = await api.post('/customer/orders', { bookingId, items });
       const order = resp.data as any;
       setCart([]);
-
-      // Attempt to mark the order as paid (simulates immediate customer payment)
-      try {
-        await api.post(`/customer/orders/${order.id}/pay`);
-        setNotice({ type: 'success', text: 'Payment successful. Redirecting to receipt...' });
-        // small delay so user sees the notice briefly
-        setTimeout(() => navigate(`/receipt/${order.id}`), 700);
-        return order;
-      } catch (payErr: any) {
-        console.error('[Checkout] payment error', payErr);
-        setNotice({ type: 'info', text: 'Order created but payment failed. Please contact cashier.' });
-        return order;
-      }
+      setNotice({ type: 'success', text: 'Order created successfully. Please pay at the cashier to receive your receipt.' });
+      return order;
     } catch (e: any) {
       console.error('[Checkout] Error', e);
       const text = e?.response?.data?.error ?? 'Failed to create order.';

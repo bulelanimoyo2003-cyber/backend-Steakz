@@ -154,27 +154,52 @@ router.post('/orders', async (req: Request, res: Response) => {
   res.status(201).json(order);
 });
 
-router.post('/orders/:id/pay', async (req: Request, res: Response) => {
-  try {
-    const customerId = req.user!.id;
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id) || id <= 0) {
-      res.status(400).json({ error: 'Invalid order id.' });
-      return;
-    }
+function buildReceiptNumber(order: { id: number; createdAt: Date }) {
+  return `STEAKZ-${order.id}-${Math.floor(new Date(order.createdAt).getTime() / 1000)}`;
+}
 
-    const order = await prisma.order.findUnique({ where: { id } });
-    if (!order || order.customerId !== customerId) {
-      res.status(403).json({ error: 'Order not found or access denied.' });
-      return;
-    }
+function buildReceiptPayload(order: any) {
+  return {
+    restaurantName: 'Steakz Restaurant',
+    receiptNumber: buildReceiptNumber(order),
+    orderId: order.id,
+    customerName: order.customer?.name ?? 'Guest',
+    branchName: order.branch?.name ?? null,
+    dateTime: new Date(order.createdAt).toISOString(),
+    items: order.items.map((it: any) => ({
+      name: it.menuItem?.name ?? 'Item',
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      lineTotal: it.unitPrice * it.quantity,
+    })),
+    totalAmount: order.total,
+    paymentStatus: 'PAID',
+    // Cashier confirmation metadata: we don't change payment workflow — when cashier marks order PAID,
+    // the order's `updatedAt` reflects confirmation time. Expose a flag + timestamp for the receipt.
+    cashierConfirmed: order.paymentStatus === 'PAID',
+    cashierConfirmedAt: order.updatedAt ? new Date(order.updatedAt).toISOString() : null,
+    thankYou: 'Thank you for dining with us at Steakz!',
+  };
+}
 
-    const updated = await prisma.order.update({ where: { id }, data: { paymentStatus: 'PAID' } });
-    res.json(updated);
-  } catch (error) {
-    console.error('[Customer PAY] error', error);
-    res.status(500).json({ error: 'Failed to process payment.' });
-  }
+router.get('/receipts', async (req: Request, res: Response) => {
+  const customerId = req.user!.id;
+  const paidOrders = await prisma.order.findMany({
+    where: { customerId, paymentStatus: 'PAID' },
+    include: { branch: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const receipts = paidOrders.map((order) => ({
+    orderId: order.id,
+    receiptNumber: buildReceiptNumber(order),
+    branchName: order.branch?.name ?? null,
+    dateTime: order.createdAt.toISOString(),
+    totalAmount: order.total,
+    paymentStatus: order.paymentStatus,
+  }));
+
+  res.json(receipts);
 });
 
 router.get('/receipt/:orderId', async (req: Request, res: Response) => {
@@ -206,29 +231,7 @@ router.get('/receipt/:orderId', async (req: Request, res: Response) => {
       return;
     }
 
-    const receiptNumber = `STEAKZ-${order.id}-${Math.floor(new Date(order.createdAt).getTime() / 1000)}`;
-
-    const items = order.items.map((it: any) => ({
-      name: it.menuItem?.name ?? 'Item',
-      quantity: it.quantity,
-      unitPrice: it.unitPrice,
-      lineTotal: it.unitPrice * it.quantity,
-    }));
-
-    const receipt = {
-      restaurantName: 'Steakz',
-      receiptNumber,
-      orderId: order.id,
-      customerName: order.customer?.name ?? 'Guest',
-      branchName: order.branch?.name ?? null,
-      dateTime: new Date(order.createdAt).toISOString(),
-      items,
-      totalAmount: order.total,
-      paymentStatus: 'Paid',
-      thankYou: 'Thank you for dining with us at Steakz!',
-    };
-
-    res.json(receipt);
+    res.json(buildReceiptPayload(order));
   } catch (error) {
     console.error('[Customer RECEIPT] error', error);
     res.status(500).json({ error: 'Failed to fetch receipt.' });

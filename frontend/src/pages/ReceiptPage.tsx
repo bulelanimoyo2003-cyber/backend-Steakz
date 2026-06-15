@@ -86,6 +86,9 @@ export default function ReceiptPage() {
 
           <div style={{ marginTop: '1rem' }}>
             <div><strong>Payment status:</strong> {receipt.paymentStatus}</div>
+            {receipt.cashierConfirmed && (
+              <div><strong>Cashier confirmation:</strong> Confirmed{receipt.cashierConfirmedAt ? ` at ${new Date(receipt.cashierConfirmedAt).toLocaleString()}` : ''}</div>
+            )}
           </div>
 
           <div style={{ marginTop: '1.25rem', fontStyle: 'italic' }}>{receipt.thankYou}</div>

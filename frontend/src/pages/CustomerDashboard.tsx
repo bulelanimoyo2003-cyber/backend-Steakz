@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
 
@@ -25,10 +26,20 @@ interface Order {
   items: OrderItem[];
 }
 
+interface ReceiptSummary {
+  orderId: number;
+  receiptNumber: string;
+  branchName: string | null;
+  dateTime: string;
+  totalAmount: number;
+  paymentStatus: string;
+}
+
 export default function CustomerDashboard() {
   const { user } = useAuth();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [receipts, setReceipts] = useState<ReceiptSummary[]>([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -37,9 +48,10 @@ export default function CustomerDashboard() {
 
     const fetchCustomerData = async () => {
       try {
-        const [bookingsResp, ordersResp] = await Promise.all([
+        const [bookingsResp, ordersResp, receiptsResp] = await Promise.all([
           api.get<Booking[]>('/customer/bookings'),
           api.get<Order[]>('/customer/orders'),
+          api.get<ReceiptSummary[]>('/customer/receipts'),
         ]);
 
         if (!mounted) {
@@ -48,9 +60,10 @@ export default function CustomerDashboard() {
 
         setBookings(bookingsResp.data);
         setOrders(ordersResp.data);
+        setReceipts(receiptsResp.data);
       } catch {
         if (mounted) {
-          setError('Unable to load reservations or orders.');
+          setError('Unable to load reservations, orders, or receipts.');
           setSuccess('');
         }
       }
@@ -156,12 +169,60 @@ export default function CustomerDashboard() {
                   <li key={index}>{item.menuItem.name} × {item.quantity}</li>
                 ))}
               </ul>
-              <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+              <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="price">€{order.total.toFixed(2)}</span>
+                {order.paymentStatus === 'PAID' && (
+                  <Link className="btn btn-sm btn-primary" to={`/receipt/${order.id}`}>
+                    View Receipt
+                  </Link>
+                )}
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      <div className="section-title">My Receipts</div>
+      {receipts.length === 0 ? (
+        <div className="empty-state">
+          <span>🧾</span>
+          No receipts available yet.
+        </div>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Receipt #</th>
+              <th>Order</th>
+              <th>Branch</th>
+              <th>Date</th>
+              <th>Total</th>
+              <th>Status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {receipts.map((receipt) => (
+              <tr key={receipt.orderId}>
+                <td>{receipt.receiptNumber}</td>
+                <td>#{receipt.orderId}</td>
+                <td>{receipt.branchName ?? 'N/A'}</td>
+                <td>{new Date(receipt.dateTime).toLocaleString()}</td>
+                <td>€{receipt.totalAmount.toFixed(2)}</td>
+                <td>
+                  <span className={`badge ${receipt.paymentStatus === 'PAID' ? 'badge-success' : 'badge-warning'}`}>
+                    {receipt.paymentStatus}
+                  </span>
+                </td>
+                <td>
+                  <Link className="btn btn-sm btn-primary" to={`/receipt/${receipt.orderId}`}>
+                    Open Receipt
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
