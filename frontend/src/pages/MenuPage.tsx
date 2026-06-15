@@ -1,4 +1,5 @@
 import { useEffect, useState, type MouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 
@@ -25,6 +26,7 @@ export default function MenuPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     api
@@ -99,9 +101,21 @@ export default function MenuPage() {
       const items = cart.map((c) => ({ menuItemId: c.item.id, quantity: c.quantity }));
 
       const resp = await api.post('/customer/orders', { bookingId, items });
-      setNotice({ type: 'success', text: 'Order created successfully.' });
+      const order = resp.data as any;
       setCart([]);
-      return resp.data;
+
+      // Attempt to mark the order as paid (simulates immediate customer payment)
+      try {
+        await api.post(`/customer/orders/${order.id}/pay`);
+        setNotice({ type: 'success', text: 'Payment successful. Redirecting to receipt...' });
+        // small delay so user sees the notice briefly
+        setTimeout(() => navigate(`/receipt/${order.id}`), 700);
+        return order;
+      } catch (payErr: any) {
+        console.error('[Checkout] payment error', payErr);
+        setNotice({ type: 'info', text: 'Order created but payment failed. Please contact cashier.' });
+        return order;
+      }
     } catch (e: any) {
       console.error('[Checkout] Error', e);
       const text = e?.response?.data?.error ?? 'Failed to create order.';

@@ -154,4 +154,85 @@ router.post('/orders', async (req: Request, res: Response) => {
   res.status(201).json(order);
 });
 
+router.post('/orders/:id/pay', async (req: Request, res: Response) => {
+  try {
+    const customerId = req.user!.id;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: 'Invalid order id.' });
+      return;
+    }
+
+    const order = await prisma.order.findUnique({ where: { id } });
+    if (!order || order.customerId !== customerId) {
+      res.status(403).json({ error: 'Order not found or access denied.' });
+      return;
+    }
+
+    const updated = await prisma.order.update({ where: { id }, data: { paymentStatus: 'PAID' } });
+    res.json(updated);
+  } catch (error) {
+    console.error('[Customer PAY] error', error);
+    res.status(500).json({ error: 'Failed to process payment.' });
+  }
+});
+
+router.get('/receipt/:orderId', async (req: Request, res: Response) => {
+  try {
+    const customerId = req.user!.id;
+    const orderId = Number(req.params.orderId);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      res.status(400).json({ error: 'Invalid order id.' });
+      return;
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: { include: { menuItem: true } }, customer: true, branch: true },
+    }) as any;
+
+    if (!order) {
+      res.status(404).json({ error: 'Order not found.' });
+      return;
+    }
+
+    if (order.customerId !== customerId) {
+      res.status(403).json({ error: 'Unauthorized access to this receipt.' });
+      return;
+    }
+
+    if (order.paymentStatus !== 'PAID') {
+      res.status(400).json({ error: 'Receipt unavailable until payment is completed.' });
+      return;
+    }
+
+    const receiptNumber = `STEAKZ-${order.id}-${Math.floor(new Date(order.createdAt).getTime() / 1000)}`;
+
+    const items = order.items.map((it: any) => ({
+      name: it.menuItem?.name ?? 'Item',
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      lineTotal: it.unitPrice * it.quantity,
+    }));
+
+    const receipt = {
+      restaurantName: 'Steakz',
+      receiptNumber,
+      orderId: order.id,
+      customerName: order.customer?.name ?? 'Guest',
+      branchName: order.branch?.name ?? null,
+      dateTime: new Date(order.createdAt).toISOString(),
+      items,
+      totalAmount: order.total,
+      paymentStatus: 'Paid',
+      thankYou: 'Thank you for dining with us at Steakz!',
+    };
+
+    res.json(receipt);
+  } catch (error) {
+    console.error('[Customer RECEIPT] error', error);
+    res.status(500).json({ error: 'Failed to fetch receipt.' });
+  }
+});
+
 export default router;

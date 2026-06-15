@@ -16,6 +16,7 @@ import BranchManagerDashboard from './pages/BranchManagerDashboard';
 import HQDashboard from './pages/HQDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import NotFoundPage from './pages/NotFoundPage';
+import ReceiptPage from './pages/ReceiptPage';
 
 export default function App() {
   return (
@@ -85,6 +86,11 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/receipt/:orderId" element={
+            <ProtectedRoute allowedRoles={["CUSTOMER"]}>
+              <ReceiptPage />
+            </ProtectedRoute>
+          } />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </AuthProvider>
