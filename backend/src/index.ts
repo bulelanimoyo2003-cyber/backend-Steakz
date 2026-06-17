@@ -18,20 +18,25 @@ import publicRoutes from './routes/publicRoutes.js';
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 
+function normalizeOrigin(o: string | undefined) {
+  return o?.replace(/\/$/, '')?.trim();
+}
+
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://steak-frontend-dx21.onrender.com',
+  normalizeOrigin(process.env.FRONTEND_URL),
+].filter(Boolean) as string[];
+
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'https://steak-frontend-dx21.onrender.com',
-      process.env.FRONTEND_URL,
-    ].filter(Boolean);
-
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
+    const incoming = normalizeOrigin(origin);
+    console.log('[CORS] Origin:', incoming);
+    // Allow requests with no origin (e.g. server-to-server, curl)
+    if (!incoming) return callback(null, true);
+    if (allowedOrigins.includes(incoming)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -48,7 +53,10 @@ if (!process.env.DATABASE_URL) {
   console.warn('[Backend] DATABASE_URL is not set.');
 }
 
+// Register CORS middleware before all routes
 app.use(cors(corsOptions));
+// Support OPTIONS preflight for all routes
+app.options('*', cors(corsOptions));
 
 app.use(express.json());
 app.use(logger);
