@@ -100,6 +100,10 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/test', (req: Request, res: Response) => {
+  res.json({ status: 'auth route working' });
+});
+
 router.get('/me', verifyToken, async (req: Request, res: Response) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.id },
