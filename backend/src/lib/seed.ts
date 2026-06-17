@@ -34,6 +34,15 @@ const TABLES = [
   { tableNumber: 1, capacity: 4 },
   { tableNumber: 2, capacity: 6 },
   { tableNumber: 3, capacity: 2 },
+  { tableNumber: 4, capacity: 4 },
+  { tableNumber: 5, capacity: 4 },
+  { tableNumber: 6, capacity: 6 },
+  { tableNumber: 7, capacity: 2 },
+  { tableNumber: 8, capacity: 8 },
+  { tableNumber: 9, capacity: 4 },
+  { tableNumber: 10, capacity: 6 },
+  { tableNumber: 11, capacity: 2 },
+  { tableNumber: 12, capacity: 4 },
 ];
 
 type SeedRole = Role;
@@ -55,11 +64,16 @@ async function ensureBranchData() {
     }
 
     const existingTables = await prisma.table.findMany({ where: { branchId: branchRecord.id } });
-    if (existingTables.length === 0) {
-      for (const table of TABLES) {
+    const existingTableNumbers = new Set(existingTables.map((table) => table.tableNumber));
+    let createdTableCount = 0;
+    for (const table of TABLES) {
+      if (!existingTableNumbers.has(table.tableNumber)) {
         await prisma.table.create({ data: { ...table, branchId: branchRecord.id } });
+        createdTableCount += 1;
       }
-      console.log(`[Seeder] Tables created for ${branch.name}`);
+    }
+    if (createdTableCount > 0) {
+      console.log(`[Seeder] ${createdTableCount} tables added for ${branch.name}`);
     }
 
     const existingMenuItems = await prisma.menuItem.findMany({ where: { branchId: branchRecord.id } });
