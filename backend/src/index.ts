@@ -18,20 +18,21 @@ import publicRoutes from './routes/publicRoutes.js';
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 
-function normalizeOrigin(origin: string | undefined) {
-  return origin?.replace(/\/$/, '');
-}
-
-const frontendUrl = normalizeOrigin(process.env.FRONTEND_URL);
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'https://steak-frontend-dx21.onrender.com',
-  frontendUrl,
-].filter((origin): origin is string => Boolean(origin));
-
 const corsOptions = {
-  origin: allowedOrigins,
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'https://steak-frontend-dx21.onrender.com',
+      process.env.FRONTEND_URL,
+    ].filter(Boolean);
+
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -48,18 +49,6 @@ if (!process.env.DATABASE_URL) {
 }
 
 app.use(cors(corsOptions));
-
-// Ensure CORS headers are set on all responses (including 404s) for allowed origins
-app.use((req, res, next) => {
-  const originHeader = (req.headers.origin as string) || '';
-  if (allowedOrigins.includes(originHeader)) {
-    res.setHeader('Access-Control-Allow-Origin', originHeader);
-    if (corsOptions.credentials) res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-  }
-  next();
-});
 
 app.use(express.json());
 app.use(logger);
