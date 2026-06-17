@@ -81,6 +81,22 @@ const registeredRoutes = [
 ];
 console.log('[Backend] Registered routes:', registeredRoutes.join(', '));
 
+function logRegisteredRouteHandlers() {
+  const stack = (app as any)._router?.stack ?? [];
+  const routes = stack
+    .filter((layer: any) => layer.route)
+    .flatMap((layer: any) => {
+      const path = layer.route.path;
+      const methods = Object.keys(layer.route.methods ?? {}).map((method) => method.toUpperCase());
+      return methods.map((method) => `${method} ${path}`);
+    });
+
+  console.log('[Backend] Express registered route handlers:');
+  routes.forEach((route: string) => console.log(`  ${route}`));
+}
+
+logRegisteredRouteHandlers();
+
 app.use(errorHandler);
 
 app.listen(PORT, async () => {
