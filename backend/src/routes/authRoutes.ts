@@ -112,4 +112,4 @@ router.get('/me', verifyToken, async (req: Request, res: Response) => {
   res.json(user);
 });
 
-export default router;
+export default router; 
