@@ -55,8 +55,8 @@ if (!process.env.DATABASE_URL) {
 
 // Register CORS middleware before all routes
 app.use(cors(corsOptions));
-// Support OPTIONS preflight for all routes
-app.options('*', cors(corsOptions));
+// Support OPTIONS preflight for all routes (Express-compatible regex pattern)
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 app.use(logger);
