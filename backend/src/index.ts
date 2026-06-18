@@ -56,13 +56,6 @@ if (!process.env.DATABASE_URL) {
 // Register CORS middleware before all routes
 app.use(cors(corsOptions));
 
-const allowedOrigins = [
-  'https://steak-frontend-dx21.onrender.com',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  normalizeOrigin(process.env.FRONTEND_URL),
-].filter(Boolean) as string[];
-
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   console.log('[CORS CHECK]', req.method, req.path, origin);
