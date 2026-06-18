@@ -56,6 +56,16 @@ if (!process.env.DATABASE_URL) {
 // Register CORS middleware before all routes
 app.use(cors(corsOptions));
 
+app.options('/api/auth/login', (req, res) => {
+  const origin = req.headers.origin;
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Vary', 'Origin');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  return res.sendStatus(204);
+});
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   console.log('[CORS CHECK]', req.method, req.path, origin);
