@@ -14,6 +14,8 @@ import cashierRoutes from './routes/cashierRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import menuRoutes from './routes/menuRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import deliveryManagementRoutes from './routes/deliveryManagementRoutes.js';
+import deliveryDriverRoutes from './routes/deliveryDriverRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
@@ -31,6 +33,12 @@ app.use('/api/cashier', cashierRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/menu', menuRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/delivery-management', deliveryManagementRoutes);
+app.use('/api/driver', deliveryDriverRoutes);
+
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 app.get('/api/debug/routes', (_req, res) => {
   const routes: Array<{ method: string; path: string }> = [];

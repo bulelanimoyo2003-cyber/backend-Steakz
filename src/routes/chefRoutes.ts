@@ -6,12 +6,19 @@ import { verifyToken, requireRole, requireBranch } from '../middleware/auth.js';
 const router = Router();
 router.use(verifyToken, requireRole(['CHEF']), requireBranch);
 
+const chefOrderSelect = {
+  id: true,
+  status: true,
+  createdAt: true,
+  items: { select: { quantity: true, menuItem: { select: { name: true } } } },
+} as const;
+
 router.get('/orders', async (req: Request, res: Response) => {
   try {
     const branchId = req.user!.branchId!;
     const orders = await prisma.order.findMany({
       where: { branchId, status: { in: ['PENDING', 'PREPARING'] } },
-      include: { items: { include: { menuItem: { select: { name: true } } } } },
+      select: chefOrderSelect,
       orderBy: { createdAt: 'asc' },
     });
     res.json(orders);
@@ -30,8 +37,19 @@ router.patch('/orders/:id/preparing', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Order not found in your branch.' });
       return;
     }
-    const updated = await prisma.order.update({ where: { id }, data: { status: 'PREPARING' } });
-    res.json(updated);
+    if (order.status !== 'PENDING') {
+      res.status(409).json({ error: 'Only PENDING orders can move to PREPARING.' });
+      return;
+    }
+    const result = await prisma.order.updateMany({
+      where: { id, branchId, status: 'PENDING' },
+      data: { status: 'PREPARING' },
+    });
+    if (result.count !== 1) {
+      res.status(409).json({ error: 'Order status changed; reload before trying again.' });
+      return;
+    }
+    res.json(await prisma.order.findUnique({ where: { id }, select: chefOrderSelect }));
   } catch (error) {
     console.error('[CHEF PREPARING] error', error);
     res.status(500).json({ error: 'Failed to update order status to PREPARING.' });
@@ -47,8 +65,19 @@ router.patch('/orders/:id/done', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Order not found in your branch.' });
       return;
     }
-    const updated = await prisma.order.update({ where: { id }, data: { status: 'DONE' } });
-    res.json(updated);
+    if (order.status !== 'PREPARING') {
+      res.status(409).json({ error: 'Only PREPARING orders can move to DONE.' });
+      return;
+    }
+    const result = await prisma.order.updateMany({
+      where: { id, branchId, status: 'PREPARING' },
+      data: { status: 'DONE' },
+    });
+    if (result.count !== 1) {
+      res.status(409).json({ error: 'Order status changed; reload before trying again.' });
+      return;
+    }
+    res.json(await prisma.order.findUnique({ where: { id }, select: chefOrderSelect }));
   } catch (error) {
     console.error('[CHEF DONE] error', error);
     res.status(500).json({ error: 'Failed to update order status to DONE.' });

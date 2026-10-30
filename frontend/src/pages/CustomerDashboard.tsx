@@ -20,6 +20,13 @@ interface Order {
   id: number;
   total: number;
   status: string;
+  orderType: string;
+  deliveryStatus: string | null;
+  recipientName?: string | null;
+  recipientPhone?: string | null;
+  deliveryAddress?: string | null;
+  deliveryInstructions?: string | null;
+  assignedDriver?: { id: number; name: string } | null;
   paymentStatus?: string;
   createdAt: string;
   branch: { name: string };
@@ -154,7 +161,7 @@ export default function CustomerDashboard() {
                 <div>
                   <span className="card-label">Order #{order.id}</span>
                   <p style={{ fontSize: '0.82rem', marginTop: '0.1rem', color: 'var(--text-secondary)' }}>
-                    {order.branch.name} · {new Date(order.createdAt).toLocaleDateString()}
+                    {order.branch.name} · {order.orderType.replace('_', ' ')} · {new Date(order.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', alignItems: 'flex-end' }}>
@@ -169,6 +176,15 @@ export default function CustomerDashboard() {
                   <li key={index}>{item.menuItem.name} × {item.quantity}</li>
                 ))}
               </ul>
+              {order.orderType === 'DELIVERY' && (
+                <div className="customer-delivery-progress">
+                  <strong>Delivery: {order.deliveryStatus?.replaceAll('_', ' ') ?? 'Waiting for driver assignment'}</strong>
+                  {order.recipientName && <div>Recipient: {order.recipientName} · {order.recipientPhone}</div>}
+                  {order.deliveryAddress && <div>Address: {order.deliveryAddress}</div>}
+                  {order.deliveryInstructions && <div>Instructions: {order.deliveryInstructions}</div>}
+                  <div>Driver: {order.assignedDriver?.name ?? 'Not assigned yet'}</div>
+                </div>
+              )}
               <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="price">€{order.total.toFixed(2)}</span>
                 {order.paymentStatus === 'PAID' && (

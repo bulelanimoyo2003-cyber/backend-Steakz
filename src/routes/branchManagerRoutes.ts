@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole, requireBranch } from '../middleware/auth.js';
 
@@ -26,6 +28,7 @@ router.get('/orders', async (req: Request, res: Response) => {
     include: {
       items: { include: { menuItem: true } },
       customer: { select: { name: true } },
+      assignedDriver: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -35,11 +38,49 @@ router.get('/orders', async (req: Request, res: Response) => {
 router.get('/staff', async (req: Request, res: Response) => {
   const branchId = req.user!.branchId!;
   const staff = await prisma.user.findMany({
-    where: { branchId, role: { in: ['CHEF', 'CASHIER', 'BRANCH_MANAGER'] } },
+    where: { branchId, role: { in: ['CHEF', 'CASHIER', 'BRANCH_MANAGER', 'DELIVERY_DRIVER'] } },
     select: { id: true, name: true, role: true, salary: true, isActive: true },
     orderBy: { id: 'asc' },
   });
   res.json(staff);
+});
+
+router.post('/staff/drivers', async (req: Request, res: Response) => {
+  const { name, email, password } = req.body as {
+    name?: string;
+    email?: string;
+    password?: string;
+  };
+  const normalizedName = typeof name === 'string' ? name.trim() : '';
+  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+
+  if (!normalizedName || normalizedName.length > 120 || !normalizedEmail
+    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+    || typeof password !== 'string' || password.length < 8) {
+    res.status(400).json({ error: 'Provide a name, valid email, and password with at least 8 characters.' });
+    return;
+  }
+
+  try {
+    const user = await prisma.user.create({
+      data: {
+        name: normalizedName,
+        email: normalizedEmail,
+        password: await bcrypt.hash(password, 10),
+        role: 'DELIVERY_DRIVER',
+        branchId: req.user!.branchId!,
+      },
+      select: { id: true, name: true, email: true, role: true, branchId: true, isActive: true },
+    });
+    res.status(201).json(user);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      res.status(409).json({ error: 'Email already in use.' });
+      return;
+    }
+    console.error('[Branch manager create driver] Unexpected error:', error);
+    res.status(500).json({ error: 'Unable to create delivery driver.' });
+  }
 });
 
 router.get('/bookings', async (req: Request, res: Response) => {

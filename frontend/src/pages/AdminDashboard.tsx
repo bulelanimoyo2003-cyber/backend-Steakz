@@ -19,7 +19,7 @@ interface Branch {
   isActive: boolean;
 }
 
-const ROLES = ['ADMIN', 'HQ_MANAGER', 'BRANCH_MANAGER', 'CHEF', 'CASHIER', 'CUSTOMER'];
+const ROLES = ['ADMIN', 'HQ_MANAGER', 'BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER', 'CUSTOMER'];
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);

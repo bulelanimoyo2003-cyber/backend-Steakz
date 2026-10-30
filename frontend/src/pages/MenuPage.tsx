@@ -18,6 +18,7 @@ interface MenuItem {
 }
 
 export default function MenuPage() {
+  const { user } = useAuth();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [menu, setMenu] = useState<MenuItem[]>([]);
@@ -25,8 +26,16 @@ export default function MenuPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-  const { user } = useAuth();
+  const [orderType, setOrderType] = useState<'DINE_IN' | 'COLLECTION' | 'DELIVERY'>('DINE_IN');
+  const [recipientName, setRecipientName] = useState('');
+  const [recipientPhone, setRecipientPhone] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryInstructions, setDeliveryInstructions] = useState('');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user?.name) setRecipientName((current) => current || user.name);
+  }, [user?.name]);
 
   useEffect(() => {
     api
@@ -88,22 +97,53 @@ export default function MenuPage() {
       setNotice({ type: 'error', text: 'Only customers can place orders.' });
       return;
     }
+    if (!selectedId) {
+      setNotice({ type: 'error', text: 'Choose a location before checking out.' });
+      return;
+    }
+
+    if (orderType === 'DELIVERY'
+      && (!recipientName.trim()
+        || !/^\+?[0-9\s().-]{7,30}$/.test(recipientPhone.trim())
+        || !deliveryAddress.trim()
+        || recipientName.trim().length > 120
+        || deliveryAddress.trim().length > 500
+        || deliveryInstructions.trim().length > 500)) {
+      setNotice({ type: 'error', text: 'Enter a recipient name, valid phone number, and delivery address. Instructions may be up to 500 characters.' });
+      return;
+    }
 
     try {
-      const bookingsResp = await api.get('/customer/bookings');
-      const bookings = bookingsResp.data as any[];
-      if (!bookings || bookings.length === 0) {
-        setNotice({ type: 'info', text: 'You have no bookings. Please create a booking before ordering.' });
-        return;
+      const items = cart.map((c) => ({ menuItemId: c.item.id, quantity: c.quantity }));
+      let payload: Record<string, unknown> = { orderType, branchId: selectedId, items };
+      if (orderType === 'DINE_IN') {
+        const bookingsResp = await api.get('/customer/bookings');
+        const bookings = bookingsResp.data as { id: number; table: { branchId: number } }[];
+        const booking = bookings.find((candidate) => candidate.table.branchId === selectedId);
+        if (!booking) {
+          setNotice({ type: 'info', text: 'You have no booking at this location. Create a booking before ordering dine-in.' });
+          return;
+        }
+        payload = { orderType, bookingId: booking.id, items };
+      } else if (orderType === 'DELIVERY') {
+        payload = {
+          ...payload,
+          recipientName: recipientName.trim(),
+          recipientPhone: recipientPhone.trim(),
+          deliveryAddress: deliveryAddress.trim(),
+          deliveryInstructions: deliveryInstructions.trim(),
+        };
       }
 
-      const bookingId = bookings[0].id;
-      const items = cart.map((c) => ({ menuItemId: c.item.id, quantity: c.quantity }));
-
-      const resp = await api.post('/customer/orders', { bookingId, items });
+      const resp = await api.post('/customer/orders', payload);
       const order = resp.data as any;
       setCart([]);
-      setNotice({ type: 'success', text: 'Order created successfully. Please pay at the cashier to receive your receipt.' });
+      setNotice({
+        type: 'success',
+        text: orderType === 'DELIVERY'
+          ? 'Delivery order placed. Track its progress from your customer dashboard.'
+          : 'Order created successfully. Please pay at the cashier to receive your receipt.',
+      });
       return order;
     } catch (e: any) {
       console.error('[Checkout] Error', e);
@@ -127,6 +167,36 @@ export default function MenuPage() {
             <strong>Cart</strong>
             <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{cart.length} items</span>
           </div>
+
+          <div className="form-group">
+            <label htmlFor="order-type">Order type</label>
+            <select id="order-type" value={orderType} onChange={(event) => setOrderType(event.target.value as typeof orderType)}>
+              <option value="DINE_IN">Dine-in (booking required)</option>
+              <option value="COLLECTION">Collection</option>
+              <option value="DELIVERY">Delivery</option>
+            </select>
+          </div>
+
+          {orderType === 'DELIVERY' && (
+            <div className="delivery-details">
+              <div className="form-group">
+                <label htmlFor="recipient-name">Recipient name</label>
+                <input id="recipient-name" value={recipientName} maxLength={120} onChange={(event) => setRecipientName(event.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label htmlFor="recipient-phone">Phone number</label>
+                <input id="recipient-phone" type="tel" value={recipientPhone} maxLength={30} onChange={(event) => setRecipientPhone(event.target.value)} autoComplete="tel" required />
+              </div>
+              <div className="form-group">
+                <label htmlFor="delivery-address">Delivery address</label>
+                <textarea id="delivery-address" value={deliveryAddress} maxLength={500} rows={3} onChange={(event) => setDeliveryAddress(event.target.value)} autoComplete="street-address" required />
+              </div>
+              <div className="form-group">
+                <label htmlFor="delivery-instructions">Delivery instructions (optional)</label>
+                <textarea id="delivery-instructions" value={deliveryInstructions} maxLength={500} rows={2} onChange={(event) => setDeliveryInstructions(event.target.value)} />
+              </div>
+            </div>
+          )}
 
           {notice && <div className={`alert ${notice.type === 'error' ? 'alert-error' : notice.type === 'success' ? 'alert-success' : ''}`}>{notice.text}</div>}
 

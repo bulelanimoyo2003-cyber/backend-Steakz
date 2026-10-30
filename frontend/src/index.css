@@ -658,3 +658,150 @@ select option {
     font-size: 1rem;
   }
 }
+
+.delivery-details {
+  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+}
+
+.delivery-details .form-group {
+  margin-bottom: 0.75rem;
+}
+
+.delivery-assignment {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.45rem;
+  min-width: 150px;
+}
+
+.delivery-order-cell {
+  min-width: 240px;
+  max-width: 380px;
+  overflow-wrap: anywhere;
+}
+
+.delivery-order-cell small {
+  color: var(--text-secondary);
+}
+
+.customer-delivery-progress {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  padding: 0.85rem;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.customer-delivery-progress strong {
+  color: var(--text-primary);
+}
+
+.driver-delivery-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.driver-delivery-card {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-card);
+  overflow-wrap: anywhere;
+}
+
+.driver-delivery-heading,
+.driver-recipient,
+.driver-delivery-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.driver-branch,
+.driver-delivery-timestamps,
+.driver-waiting {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+}
+
+.driver-statuses {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.driver-recipient a {
+  color: var(--primary-dark);
+  font-weight: 600;
+}
+
+.driver-delivery-card p {
+  margin-top: 0.25rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.driver-delivery-timestamps {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.driver-delivery-actions .btn {
+  min-height: 48px;
+}
+
+.driver-waiting {
+  flex-basis: 100%;
+}
+
+.badge-assigned {
+  background: #DBEAFE;
+  color: #1E40AF;
+  border: 1px solid #BFDBFE;
+}
+
+.badge-out_for_delivery {
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FCD34D;
+}
+
+.badge-unassigned {
+  background: #F1F5F9;
+  color: #475569;
+  border: 1px solid #E2E8F0;
+}
+
+@media (max-width: 600px) {
+  .driver-delivery-card {
+    padding: 1rem;
+  }
+
+  .driver-delivery-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .driver-delivery-actions .btn {
+    width: 100%;
+    justify-content: center;
+    white-space: normal;
+  }
+
+  .driver-dashboard .section-title {
+    font-size: 1.2rem;
+  }
+}

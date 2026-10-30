@@ -19,22 +19,49 @@ interface StaffMember {
 interface Order {
   id: number;
   status: string;
+  orderType: string;
+  deliveryStatus: string | null;
+  assignedDriver?: { id: number; name: string } | null;
   total: number;
   createdAt: string;
-  branch: { name: string };
+  branch: { id: number; name: string };
+}
+
+interface Driver {
+  id: number;
+  name: string;
 }
 
 export default function HQDashboard() {
   const [sales, setSales] = useState<BranchSales[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [driversByBranch, setDriversByBranch] = useState<Record<number, Driver[]>>({});
   const [error, setError] = useState('');
 
   useEffect(() => {
     api.get<BranchSales[]>('/hq/sales').then((response) => setSales(response.data)).catch(() => setError('Unable to load sales data.'));
     api.get<StaffMember[]>('/hq/staff').then((response) => setStaff(response.data)).catch(() => setError('Unable to load staff data.'));
-    api.get<Order[]>('/hq/orders').then((response) => setOrders(response.data)).catch(() => setError('Unable to load order overview.'));
+    api.get<Order[]>('/hq/orders').then(async (response) => {
+      setOrders(response.data);
+      const branchIds = [...new Set(response.data.filter((order) => order.orderType === 'DELIVERY').map((order) => order.branch.id))];
+      const driverLists = await Promise.all(branchIds.map(async (branchId) => {
+        const drivers = await api.get<Driver[]>('/delivery-management/drivers', { params: { branchId } });
+        return [branchId, drivers.data] as const;
+      }));
+      setDriversByBranch(Object.fromEntries(driverLists));
+    }).catch(() => setError('Unable to load order overview or eligible drivers.'));
   }, []);
+
+  async function assignDriver(orderId: number, driverId: number) {
+    try {
+      const response = await api.patch<Order>(`/delivery-management/orders/${orderId}/driver`, { driverId });
+      setOrders((previous) => previous.map((order) => order.id === orderId ? { ...order, ...response.data } : order));
+      setError('');
+    } catch {
+      setError('Unable to assign this driver. Refresh and check the order status.');
+    }
+  }
 
   const totalRevenue = sales.reduce((sum, branch) => sum + branch.totalSales, 0);
   const totalOrders = sales.reduce((sum, branch) => sum + branch.orderCount, 0);
@@ -92,7 +119,7 @@ export default function HQDashboard() {
       ) : (
         <table className="data-table">
           <thead>
-            <tr><th>Order</th><th>Location</th><th>Status</th><th>Total</th></tr>
+            <tr><th>Order</th><th>Location</th><th>Status</th><th>Delivery / driver</th><th>Total</th></tr>
           </thead>
           <tbody>
             {orders.slice(0, 10).map((order) => (
@@ -100,6 +127,28 @@ export default function HQDashboard() {
                 <td>#{order.id}</td>
                 <td>{order.branch.name}</td>
                 <td><span className={`badge badge-${order.status.toLowerCase()}`}>{order.status}</span></td>
+                <td>
+                  {order.orderType === 'DELIVERY' ? (
+                    <div className="delivery-assignment">
+                      <span>{order.deliveryStatus?.replaceAll('_', ' ') ?? 'UNASSIGNED'}</span>
+                      <select
+                        aria-label={`Assign driver to order ${order.id}`}
+                        value={order.assignedDriver?.id ?? ''}
+                        disabled={order.status === 'CANCELLED' || order.status === 'DELIVERED'
+                          || order.deliveryStatus === 'OUT_FOR_DELIVERY' || order.deliveryStatus === 'DELIVERED'}
+                        onChange={(event) => {
+                          if (event.target.value) void assignDriver(order.id, Number(event.target.value));
+                        }}
+                      >
+                        <option value="">Assign driver</option>
+                        {(driversByBranch[order.branch.id] ?? []).map((driver) => (
+                          <option key={driver.id} value={driver.id}>{driver.name}</option>
+                        ))}
+                      </select>
+                      <span>{order.assignedDriver?.name ?? 'Unassigned'}</span>
+                    </div>
+                  ) : <span>{order.orderType.replace('_', ' ')}</span>}
+                </td>
                 <td><span className="price">€{order.total.toFixed(2)}</span></td>
               </tr>
             ))}

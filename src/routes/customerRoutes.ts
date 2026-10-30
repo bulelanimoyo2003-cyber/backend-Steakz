@@ -92,6 +92,7 @@ router.get('/orders', async (req: Request, res: Response) => {
     include: {
       items: { include: { menuItem: true } },
       branch: { select: { name: true } },
+      assignedDriver: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -100,29 +101,102 @@ router.get('/orders', async (req: Request, res: Response) => {
 
 router.post('/orders', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
-  const { bookingId, items } = req.body as {
+  const { bookingId: requestedBookingId, branchId: requestedBranchId, items, orderType: requestedOrderType } = req.body as {
     bookingId?: number;
     items?: { menuItemId: number; quantity: number }[];
+    branchId?: number;
+    orderType?: string;
+    recipientName?: string;
+    recipientPhone?: string;
+    deliveryAddress?: string;
+    deliveryInstructions?: string;
+  };
+  const { recipientName, recipientPhone, deliveryAddress, deliveryInstructions } = req.body as {
+    recipientName?: string;
+    recipientPhone?: string;
+    deliveryAddress?: string;
+    deliveryInstructions?: string;
   };
 
-  if (!bookingId || !items || items.length === 0) {
-    res.status(400).json({ error: 'bookingId and items are required.' });
+  const orderTypes = ['DINE_IN', 'COLLECTION', 'DELIVERY'] as const;
+  if (requestedOrderType !== undefined && !orderTypes.some((type) => type === requestedOrderType)) {
+    res.status(400).json({ error: 'orderType must be DINE_IN, COLLECTION, or DELIVERY.' });
+    return;
+  }
+  const orderType = requestedOrderType as (typeof orderTypes)[number] | undefined ?? 'DINE_IN';
+
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50
+    || items.some((item) => !item || !Number.isInteger(item.menuItemId) || item.menuItemId <= 0
+      || !Number.isInteger(item.quantity) || item.quantity <= 0 || item.quantity > 50)) {
+    res.status(400).json({ error: 'Provide between 1 and 50 valid menu items with quantities from 1 to 50.' });
     return;
   }
 
-  const booking = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    include: { table: true },
-  });
-
-  if (!booking || booking.customerId !== customerId) {
-    res.status(403).json({ error: 'Booking not found.' });
-    return;
+  let bookingId: number | undefined;
+  let resolvedBranchId: number;
+  if (orderType === 'DINE_IN') {
+    if (!Number.isInteger(requestedBookingId) || !requestedBookingId || requestedBookingId <= 0) {
+      res.status(400).json({ error: 'bookingId is required for dine-in orders.' });
+      return;
+    }
+    const booking = await prisma.booking.findUnique({
+      where: { id: requestedBookingId },
+      include: { table: true },
+    });
+    if (!booking || booking.customerId !== customerId) {
+      res.status(403).json({ error: 'Booking not found.' });
+      return;
+    }
+    bookingId = requestedBookingId;
+    resolvedBranchId = booking.table.branchId;
+  } else {
+    if (!Number.isInteger(requestedBranchId) || !requestedBranchId || requestedBranchId <= 0) {
+      res.status(400).json({ error: 'A valid branchId is required for collection and delivery orders.' });
+      return;
+    }
+    const branch = await prisma.branch.findUnique({ where: { id: requestedBranchId } });
+    if (!branch || !branch.isActive) {
+      res.status(400).json({ error: 'The selected branch is unavailable.' });
+      return;
+    }
+    resolvedBranchId = branch.id;
   }
 
-  const branchId = booking.table.branchId;
+  let deliveryDetails: {
+    recipientName: string;
+    recipientPhone: string;
+    deliveryAddress: string;
+    deliveryInstructions: string | null;
+  } | undefined;
+  if (orderType === 'DELIVERY') {
+    const name = typeof recipientName === 'string' ? recipientName.trim() : '';
+    const phone = typeof recipientPhone === 'string' ? recipientPhone.trim() : '';
+    const address = typeof deliveryAddress === 'string' ? deliveryAddress.trim() : '';
+    const instructions = typeof deliveryInstructions === 'string' ? deliveryInstructions.trim() : '';
+    if (!name || name.length > 120 || !phone || phone.length > 30
+      || !/^\+?[0-9\s().-]{7,30}$/.test(phone)
+      || !address || address.length > 500
+      || (deliveryInstructions !== undefined && deliveryInstructions !== null && typeof deliveryInstructions !== 'string')
+      || instructions.length > 500) {
+      res.status(400).json({
+        error: 'Delivery requires a recipient name, valid phone number, and address. Instructions may be up to 500 characters.',
+      });
+      return;
+    }
+    deliveryDetails = {
+      recipientName: name,
+      recipientPhone: phone,
+      deliveryAddress: address,
+      deliveryInstructions: instructions || null,
+    };
+  }
+
   const menuItems = await prisma.menuItem.findMany({
-    where: { id: { in: items.map((item) => item.menuItemId) }, branchId },
+    where: {
+      id: { in: items.map((item) => item.menuItemId) },
+      branchId: resolvedBranchId,
+      isAvailable: true,
+    },
     select: { id: true, price: true },
   });
 
@@ -137,8 +211,10 @@ router.post('/orders', async (req: Request, res: Response) => {
   const order = await prisma.order.create({
     data: {
       customerId,
-      bookingId,
-      branchId,
+      bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
+      branchId: resolvedBranchId,
+      orderType,
+      ...deliveryDetails,
       total,
       items: {
         create: items.map((item) => ({
@@ -152,6 +228,69 @@ router.post('/orders', async (req: Request, res: Response) => {
   });
 
   res.status(201).json(order);
+});
+
+function buildReceiptNumber(order: { id: number; createdAt: Date }) {
+  return `STEAKZ-${order.id}-${Math.floor(order.createdAt.getTime() / 1000)}`;
+}
+
+router.get('/receipts', async (req: Request, res: Response) => {
+  const orders = await prisma.order.findMany({
+    where: { customerId: req.user!.id, paymentStatus: 'PAID' },
+    include: { branch: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json(orders.map((order) => ({
+    orderId: order.id,
+    receiptNumber: buildReceiptNumber(order),
+    branchName: order.branch.name,
+    dateTime: order.createdAt.toISOString(),
+    totalAmount: order.total,
+    paymentStatus: order.paymentStatus,
+  })));
+});
+
+router.get('/receipt/:orderId', async (req: Request, res: Response) => {
+  const orderId = Number(req.params.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    res.status(400).json({ error: 'Invalid order id.' });
+    return;
+  }
+
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, customerId: req.user!.id, paymentStatus: 'PAID' },
+    include: {
+      items: { include: { menuItem: true } },
+      customer: { select: { name: true } },
+      branch: { select: { name: true } },
+    },
+  });
+
+  if (!order) {
+    res.status(404).json({ error: 'Receipt not found.' });
+    return;
+  }
+
+  res.json({
+    restaurantName: 'Steakz Restaurant',
+    receiptNumber: buildReceiptNumber(order),
+    orderId: order.id,
+    customerName: order.customer?.name ?? 'Guest',
+    branchName: order.branch.name,
+    dateTime: order.createdAt.toISOString(),
+    items: order.items.map((item) => ({
+      name: item.menuItem.name,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      lineTotal: item.unitPrice * item.quantity,
+    })),
+    totalAmount: order.total,
+    paymentStatus: order.paymentStatus,
+    cashierConfirmed: true,
+    cashierConfirmedAt: null,
+    thankYou: 'Thank you for dining with us at Steakz!',
+  });
 });
 
 export default router;

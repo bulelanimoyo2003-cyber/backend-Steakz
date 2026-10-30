@@ -9,6 +9,7 @@ const ROLE_DASH: Record<string, string> = {
   BRANCH_MANAGER: '/branch-manager',
   CHEF: '/chef',
   CASHIER: '/cashier',
+  DELIVERY_DRIVER: '/driver',
   CUSTOMER: '/customer',
 };
 

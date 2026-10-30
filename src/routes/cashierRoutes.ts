@@ -122,7 +122,16 @@ router.get('/orders', async (req: Request, res: Response) => {
     debugLog(`[CASHIER ORDERS] hit branchId=${branchId}, user=${req.user?.id}`);
     const orders = await prisma.order.findMany({
       where: { branchId },
-      include: { items: { include: { menuItem: true } } },
+      select: {
+        id: true,
+        total: true,
+        status: true,
+        paymentStatus: true,
+        orderType: true,
+        deliveryStatus: true,
+        createdAt: true,
+        items: { select: { quantity: true, unitPrice: true, menuItem: { select: { name: true } } } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     debugLog(`[CASHIER ORDERS] found ${orders.length} orders`);
@@ -153,7 +162,11 @@ router.patch('/orders/:id/pay', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Order not found in your branch.' });
       return;
     }
-    const updated = await prisma.order.update({ where: { id }, data: { paymentStatus: 'PAID' } });
+    const updated = await prisma.order.update({
+      where: { id },
+      data: { paymentStatus: 'PAID' },
+      select: { id: true, status: true, paymentStatus: true, orderType: true },
+    });
     await completeBookingIfOrderPaidAndDelivered(updated.id);
     res.json(updated);
   } catch (error) {
@@ -169,6 +182,10 @@ router.patch('/orders/:id/deliver', async (req: Request, res: Response) => {
     const order = await prisma.order.findUnique({ where: { id } });
     if (!order || order.branchId !== branchId) {
       res.status(403).json({ error: 'Order not found in your branch.' });
+      return;
+    }
+    if (order.orderType === 'DELIVERY') {
+      res.status(409).json({ error: 'Delivery orders can only be marked delivered by their assigned driver.' });
       return;
     }
     const updated = await prisma.order.update({ where: { id }, data: { status: 'DELIVERED' } });

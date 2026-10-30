@@ -13,7 +13,20 @@ enum Role {
   BRANCH_MANAGER
   CHEF
   CASHIER
+  DELIVERY_DRIVER
   CUSTOMER
+}
+
+enum OrderType {
+  DINE_IN
+  COLLECTION
+  DELIVERY
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  OUT_FOR_DELIVERY
+  DELIVERED
 }
 
 enum OrderStatus {
@@ -44,33 +57,34 @@ enum TableStatus {
 }
 
 model Branch {
-  id            Int            @id @default(autoincrement())
-  name          String         @unique
-  address       String
-  phone         String?
-  isActive      Boolean        @default(true)
-  users         User[]
-  tables        Table[]
-  menuItems     MenuItem[]
-  orders        Order[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  address   String
+  phone     String?
+  isActive  Boolean    @default(true)
+  users     User[]
+  tables    Table[]
+  menuItems MenuItem[]
+  orders    Order[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 }
 
 model User {
-  id        Int       @id @default(autoincrement())
-  name      String
-  email     String    @unique
-  password  String
-  role      Role      @default(CUSTOMER)
-  isActive  Boolean   @default(true)
-  branch     Branch?   @relation(fields: [branchId], references: [id])
-  branchId  Int?
-  salary    Float?
-  bookings  Booking[]
-  orders    Order[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id             Int       @id @default(autoincrement())
+  name           String
+  email          String    @unique
+  password       String
+  role           Role      @default(CUSTOMER)
+  isActive       Boolean   @default(true)
+  branch         Branch?   @relation(fields: [branchId], references: [id])
+  branchId       Int?
+  salary         Float?
+  bookings       Booking[]
+  orders         Order[]
+  assignedOrders Order[]   @relation("AssignedDeliveries")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
 model MenuItem {
@@ -115,19 +129,33 @@ model Booking {
 }
 
 model Order {
-  id         Int         @id @default(autoincrement())
-  customer   User?       @relation(fields: [customerId], references: [id])
-  customerId Int?
-  booking    Booking?    @relation(fields: [bookingId], references: [id])
-  bookingId  Int?
-  branch     Branch      @relation(fields: [branchId], references: [id])
-  branchId   Int
-  status     OrderStatus @default(PENDING)
-  paymentStatus PaymentStatus @default(UNPAID)
-  total      Float       @default(0)
-  items      OrderItem[]
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  id                   Int             @id @default(autoincrement())
+  customer             User?           @relation(fields: [customerId], references: [id])
+  customerId           Int?
+  booking              Booking?        @relation(fields: [bookingId], references: [id])
+  bookingId            Int?
+  branch               Branch          @relation(fields: [branchId], references: [id])
+  branchId             Int
+  status               OrderStatus     @default(PENDING)
+  orderType            OrderType       @default(DINE_IN)
+  deliveryStatus       DeliveryStatus?
+  paymentStatus        PaymentStatus   @default(UNPAID)
+  recipientName        String?
+  recipientPhone       String?
+  deliveryAddress      String?
+  deliveryInstructions String?
+  assignedDriver       User?           @relation("AssignedDeliveries", fields: [assignedDriverId], references: [id], onDelete: SetNull)
+  assignedDriverId     Int?
+  assignedAt           DateTime?
+  pickedUpAt           DateTime?
+  deliveredAt          DateTime?
+  total                Float           @default(0)
+  items                OrderItem[]
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  @@index([assignedDriverId, deliveryStatus])
+  @@index([branchId, orderType, deliveryStatus])
 }
 
 model OrderItem {
@@ -139,4 +167,3 @@ model OrderItem {
   quantity   Int
   unitPrice  Float
 }
-  

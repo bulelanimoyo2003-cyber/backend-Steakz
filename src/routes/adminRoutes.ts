@@ -1,11 +1,23 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
+import type { Role } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['ADMIN']));
+const VALID_ROLES: readonly string[] = [
+  'ADMIN',
+  'HQ_MANAGER',
+  'BRANCH_MANAGER',
+  'CHEF',
+  'CASHIER',
+  'DELIVERY_DRIVER',
+  'CUSTOMER',
+];
+const BRANCH_ROLES = ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER'];
 
 router.post('/branches', async (req: Request, res: Response) => {
   const { name, address, phone } = req.body as {
@@ -42,35 +54,51 @@ router.post('/users', async (req: Request, res: Response) => {
     salary?: number;
   };
 
-  if (!name || !email || !password || !role) {
+  if (typeof name !== 'string' || !name.trim()
+    || typeof email !== 'string' || !email.trim()
+    || typeof password !== 'string' || !password
+    || typeof role !== 'string' || !role.trim()) {
     res.status(400).json({ error: 'name, email, password and role are required.' });
     return;
   }
 
   const normalizedEmail = email.trim().toLowerCase();
-  const hashed = await bcrypt.hash(password, 10);
   const normalizedRole = role.trim();
 
-  const requiresBranch = ['BRANCH_MANAGER', 'CHEF', 'CASHIER'] as const;
-  if (requiresBranch.includes(normalizedRole as any) && !branchId) {
+  if (!VALID_ROLES.includes(normalizedRole)) {
+    res.status(400).json({ error: 'Invalid user role.' });
+    return;
+  }
+  if (normalizedRole === 'DELIVERY_DRIVER'
+    && (name.trim().length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || password.length < 8)) {
+    res.status(400).json({ error: 'Delivery drivers need a name (up to 120 characters), valid email, and password with at least 8 characters.' });
+    return;
+  }
+  if (BRANCH_ROLES.includes(normalizedRole) && (!Number.isInteger(branchId) || !branchId || branchId <= 0)) {
     res.status(400).json({ error: 'branchId is required for staff roles.' });
     return;
   }
 
+  const hashed = await bcrypt.hash(password, 10);
   try {
     const user = await prisma.user.create({
       data: {
         name: name.trim(),
         email: normalizedEmail,
         password: hashed,
-        role: normalizedRole as any,
+        role: normalizedRole as Role,
         branchId: branchId ?? null,
         salary: salary ?? null,
       },
     });
     res.status(201).json({ message: 'User created.', userId: user.id });
-  } catch {
-    res.status(409).json({ error: 'Email already in use.' });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      res.status(409).json({ error: 'Email already in use.' });
+      return;
+    }
+    console.error('[Admin create user] Unexpected error:', error);
+    res.status(500).json({ error: 'Unable to create user.' });
   }
 });
 
@@ -95,14 +123,17 @@ router.patch('/users/:id/role', async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const { role, branchId } = req.body as { role?: string; branchId?: number };
 
-  if (!role) {
+  if (typeof role !== 'string' || !role.trim()) {
     res.status(400).json({ error: 'role is required.' });
     return;
   }
 
   const normalizedRole = role.trim();
-  const requiresBranch = ['BRANCH_MANAGER', 'CHEF', 'CASHIER'] as const;
-  if (requiresBranch.includes(normalizedRole as any) && !branchId) {
+  if (!VALID_ROLES.includes(normalizedRole)) {
+    res.status(400).json({ error: 'Invalid user role.' });
+    return;
+  }
+  if (BRANCH_ROLES.includes(normalizedRole) && (!Number.isInteger(branchId) || !branchId || branchId <= 0)) {
     res.status(400).json({ error: 'branchId is required for staff roles.' });
     return;
   }
@@ -110,7 +141,7 @@ router.patch('/users/:id/role', async (req: Request, res: Response) => {
   try {
     const user = await prisma.user.update({
       where: { id },
-      data: { role: normalizedRole as any, branchId: branchId ?? null },
+      data: { role: normalizedRole as Role, branchId: branchId ?? null },
     });
     res.json({ message: 'Role updated.', user });
   } catch {

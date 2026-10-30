@@ -22,6 +22,7 @@ interface Order {
   id: number;
   total: number;
   status: string;
+  orderType: string;
   paymentStatus?: string;
   createdAt: string;
   items: OrderItem[];
@@ -212,6 +213,7 @@ export default function CashierDashboard() {
                   </span>
                 </div>
               </div>
+              <span className="driver-branch">{order.orderType.replace('_', ' ')}</span>
               <span className="price" style={{ display: 'block', marginTop: '0.3rem' }}>€{order.total.toFixed(2)}</span>
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
                 {order.paymentStatus !== 'PAID' && (
@@ -219,7 +221,7 @@ export default function CashierDashboard() {
                     Mark Paid
                   </button>
                 )}
-                {order.status === 'DONE' && (
+                {order.status === 'DONE' && order.orderType !== 'DELIVERY' && (
                   <button className="btn btn-outline btn-sm" type="button" onClick={() => markDelivered(order.id)}>
                     Mark Delivered
                   </button>

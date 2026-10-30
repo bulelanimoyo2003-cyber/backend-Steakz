@@ -17,6 +17,7 @@ import HQDashboard from './pages/HQDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import NotFoundPage from './pages/NotFoundPage';
 import ReceiptPage from './pages/ReceiptPage';
+import DeliveryDriverDashboard from './pages/DeliveryDriverDashboard';
 
 export default function App() {
   return (
@@ -59,6 +60,14 @@ export default function App() {
             element={
               <ProtectedRoute allowedRoles={['CASHIER']}>
                 <CashierDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/driver"
+            element={
+              <ProtectedRoute allowedRoles={['DELIVERY_DRIVER']}>
+                <DeliveryDriverDashboard />
               </ProtectedRoute>
             }
           />

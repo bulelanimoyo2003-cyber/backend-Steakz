@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import api from '../api/axios';
 import KpiCard from '../components/KpiCard';
 
@@ -27,8 +27,20 @@ interface Order {
   id: number;
   total: number;
   status: string;
+  orderType: string;
+  deliveryStatus: string | null;
+  recipientName?: string | null;
+  recipientPhone?: string | null;
+  deliveryAddress?: string | null;
+  deliveryInstructions?: string | null;
+  assignedDriver?: { id: number; name: string } | null;
   createdAt: string;
   customer?: { name: string };
+}
+
+interface Driver {
+  id: number;
+  name: string;
 }
 
 interface Table {
@@ -43,6 +55,10 @@ export default function BranchManagerDashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [driverName, setDriverName] = useState('');
+  const [driverEmail, setDriverEmail] = useState('');
+  const [driverPassword, setDriverPassword] = useState('');
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
 
@@ -51,12 +67,13 @@ export default function BranchManagerDashboard() {
 
     const fetchDashboardData = async () => {
       try {
-        const [salesResp, staffResp, ordersResp, bookingsResp, tablesResp] = await Promise.all([
+        const [salesResp, staffResp, ordersResp, bookingsResp, tablesResp, driversResp] = await Promise.all([
           api.get<SalesData>('/branch-manager/sales'),
           api.get<StaffMember[]>('/branch-manager/staff'),
           api.get<Order[]>('/branch-manager/orders'),
           api.get<Booking[]>('/branch-manager/bookings'),
           api.get<Table[]>('/branch-manager/tables'),
+          api.get<Driver[]>('/delivery-management/drivers'),
         ]);
 
         if (!mounted) {
@@ -68,6 +85,7 @@ export default function BranchManagerDashboard() {
         setOrders(ordersResp.data);
         setBookings(bookingsResp.data);
         setTables(tablesResp.data);
+        setDrivers(driversResp.data);
       } catch {
         if (mounted) {
           setError('Unable to load branch overview data.');
@@ -92,6 +110,46 @@ export default function BranchManagerDashboard() {
       setError('');
     } catch {
       setError('Unable to confirm booking.');
+      setSuccess('');
+    }
+  }
+
+  async function createDriver(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await api.post('/branch-manager/staff/drivers', {
+        name: driverName,
+        email: driverEmail,
+        password: driverPassword,
+      });
+      setDriverName('');
+      setDriverEmail('');
+      setDriverPassword('');
+      setSuccess('Delivery driver created successfully.');
+      setError('');
+      const [staffResponse, driversResponse] = await Promise.all([
+        api.get<StaffMember[]>('/branch-manager/staff'),
+        api.get<Driver[]>('/delivery-management/drivers'),
+      ]);
+      setStaff(staffResponse.data);
+      setDrivers(driversResponse.data);
+    } catch (requestError: unknown) {
+      const message = typeof requestError === 'object' && requestError !== null
+        ? (requestError as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined;
+      setError(message ?? 'Unable to create delivery driver.');
+      setSuccess('');
+    }
+  }
+
+  async function assignDriver(orderId: number, driverId: number) {
+    try {
+      const response = await api.patch<Order>(`/delivery-management/orders/${orderId}/driver`, { driverId });
+      setOrders((previous) => previous.map((order) => order.id === orderId ? { ...order, ...response.data } : order));
+      setSuccess('Delivery driver assigned.');
+      setError('');
+    } catch {
+      setError('Unable to assign this driver. Refresh and check the order status.');
       setSuccess('');
     }
   }
@@ -155,6 +213,24 @@ export default function BranchManagerDashboard() {
       </div>
 
       <div className="section-title">Staff &amp; Salaries</div>
+      <div className="card" style={{ maxWidth: 620, marginBottom: '1rem' }}>
+        <h3 style={{ marginBottom: '1rem' }}>Create Delivery Driver</h3>
+        <form onSubmit={createDriver}>
+          <div className="form-group">
+            <label htmlFor="driver-name">Full name</label>
+            <input id="driver-name" value={driverName} onChange={(event) => setDriverName(event.target.value)} maxLength={120} required />
+          </div>
+          <div className="form-group">
+            <label htmlFor="driver-email">Email</label>
+            <input id="driver-email" type="email" value={driverEmail} onChange={(event) => setDriverEmail(event.target.value)} required />
+          </div>
+          <div className="form-group">
+            <label htmlFor="driver-password">Temporary password (8+ characters)</label>
+            <input id="driver-password" type="password" minLength={8} value={driverPassword} onChange={(event) => setDriverPassword(event.target.value)} required />
+          </div>
+          <button className="btn btn-primary" type="submit">Create driver account</button>
+        </form>
+      </div>
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
         {staff.map((member) => (
           <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)', borderRadius: 'var(--radius)', marginBottom: '0.5rem', minWidth: 260 }}>
@@ -253,18 +329,50 @@ export default function BranchManagerDashboard() {
       ) : (
         <table className="data-table">
           <thead>
-            <tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th><th>Date</th></tr>
+            <tr><th>Order</th><th>Customer</th><th>Total</th><th>Preparation</th><th>Delivery</th><th>Date</th></tr>
           </thead>
           <tbody>
-            {orders.map((order) => (
-              <tr key={order.id}>
-                <td style={{ color: 'var(--text-muted)' }}>#{order.id}</td>
-                <td>{order.customer?.name ?? 'Walk-in'}</td>
-                <td><span className="price" style={{ fontSize: '0.95rem' }}>€{order.total.toFixed(2)}</span></td>
-                <td><span className={`badge badge-${order.status.toLowerCase()}`}>{order.status}</span></td>
-                <td style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{new Date(order.createdAt).toLocaleDateString()}</td>
-              </tr>
-            ))}
+            {orders.map((order) => {
+              const preparationStatus = order.orderType === 'DELIVERY' && order.deliveryStatus === 'DELIVERED'
+                ? 'DONE'
+                : order.status;
+              return (
+                <tr key={order.id}>
+                  <td style={{ color: 'var(--text-muted)' }}>#{order.id}</td>
+                  <td>{order.customer?.name ?? 'Walk-in'}</td>
+                  <td><span className="price" style={{ fontSize: '0.95rem' }}>€{order.total.toFixed(2)}</span></td>
+                  <td><span className={`badge badge-${preparationStatus.toLowerCase()}`}>{preparationStatus}</span></td>
+                  <td>
+                  {order.orderType === 'DELIVERY' ? (
+                    <div className="delivery-order-cell">
+                      <div>{order.recipientName} · {order.recipientPhone}</div>
+                      <div>{order.deliveryAddress}</div>
+                      {order.deliveryInstructions && <small>Instructions: {order.deliveryInstructions}</small>}
+                      <div className="delivery-assignment">
+                        <span className={`badge badge-${(order.deliveryStatus ?? 'unassigned').toLowerCase()}`}>
+                          {order.deliveryStatus ?? 'UNASSIGNED'}
+                        </span>
+                        <select
+                          aria-label={`Assign driver to order ${order.id}`}
+                          value={order.assignedDriver?.id ?? ''}
+                          disabled={order.status === 'CANCELLED' || order.status === 'DELIVERED'
+                            || order.deliveryStatus === 'OUT_FOR_DELIVERY' || order.deliveryStatus === 'DELIVERED'}
+                          onChange={(event) => {
+                            if (event.target.value) void assignDriver(order.id, Number(event.target.value));
+                          }}
+                        >
+                          <option value="">Assign driver</option>
+                          {drivers.map((driver) => <option key={driver.id} value={driver.id}>{driver.name}</option>)}
+                        </select>
+                        <span>{order.assignedDriver?.name ?? 'No driver assigned'}</span>
+                      </div>
+                    </div>
+                  ) : <span>{order.orderType.replace('_', ' ')}</span>}
+                  </td>
+                  <td style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{new Date(order.createdAt).toLocaleDateString()}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

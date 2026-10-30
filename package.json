@@ -6,6 +6,7 @@
     "dev": "nodemon --watch src --exec tsx src/index.ts",
     "build": "tsc --build",
     "start": "node dist/index.js",
+    "test": "tsx --test src/lib/deliveryWorkflow.test.ts",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {

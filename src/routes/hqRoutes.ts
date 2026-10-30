@@ -17,9 +17,10 @@ router.get('/overview', async (_req: Request, res: Response) => {
 router.get('/orders', async (_req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
     include: {
-      branch: { select: { name: true } },
+      branch: { select: { id: true, name: true } },
       items: { include: { menuItem: true } },
       customer: { select: { name: true } },
+      assignedDriver: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -28,7 +29,7 @@ router.get('/orders', async (_req: Request, res: Response) => {
 
 router.get('/staff', async (_req: Request, res: Response) => {
   const staff = await prisma.user.findMany({
-    where: { role: { in: ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'HQ_MANAGER'] } },
+    where: { role: { in: ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER', 'HQ_MANAGER'] } },
     select: {
       id: true,
       name: true,
