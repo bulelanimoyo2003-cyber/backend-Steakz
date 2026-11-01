@@ -1,9 +1,43 @@
-node_modules
-dist
+# Local environment files; keep checked-in examples.
 .env
-.venv
-frontend/node_modules
-frontend/dist
-backend/node_modules
-backend/dist
-backend/src/generated/prisma
+.env.*
+!.env.example
+!.env.*.example
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
+# Dependencies and generated build output.
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+*.tsbuildinfo
+backend/src/generated/prisma/
+
+# Logs and temporary files.
+*.log
+logs/
+**/logs/
+.venv/
+**/.venv/
+
+# Local databases and backups.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.bak
+*.bak.*
+*.backup
+*.backup.*
+*.dump
