@@ -16,7 +16,7 @@ if (isDev) {
 } else {
   // Production mode: use env variable or fallback
   const envUrl = normalizeUrl(import.meta.env.VITE_API_URL);
-  const fallbackProdUrl = 'https://steakz-backend-i5qe.onrender.com';
+  const fallbackProdUrl = 'https://steakz-backend-i50g.onrender.com';
   const apiBaseUrl = envUrl || fallbackProdUrl;
   baseURL = apiBaseUrl.endsWith('/api') ? apiBaseUrl : `${apiBaseUrl.replace(/\/+$/, '')}/api`;
   

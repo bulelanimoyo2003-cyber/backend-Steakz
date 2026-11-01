@@ -51,7 +51,7 @@ router.post('/users', async (req: Request, res: Response) => {
   const hashed = await bcrypt.hash(password, 10);
   const normalizedRole = role.trim();
 
-  const requiresBranch = ['BRANCH_MANAGER', 'CHEF', 'CASHIER'] as const;
+  const requiresBranch = ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER'] as const;
   if (requiresBranch.includes(normalizedRole as any) && !branchId) {
     res.status(400).json({ error: 'branchId is required for staff roles.' });
     return;
@@ -101,7 +101,7 @@ router.patch('/users/:id/role', async (req: Request, res: Response) => {
   }
 
   const normalizedRole = role.trim();
-  const requiresBranch = ['BRANCH_MANAGER', 'CHEF', 'CASHIER'] as const;
+  const requiresBranch = ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER'] as const;
   if (requiresBranch.includes(normalizedRole as any) && !branchId) {
     res.status(400).json({ error: 'branchId is required for staff roles.' });
     return;

@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import prisma from '../lib/prisma.js';
 
 declare global {
   namespace Express {
@@ -9,6 +10,7 @@ declare global {
         role: string;
         branchId: number | null;
       };
+      managerBranchId?: number;
     }
   }
 }
@@ -60,5 +62,51 @@ export function requireBranch(req: Request, res: Response, next: NextFunction): 
     res.status(403).json({ error: 'No branch assigned to this account.' });
     return;
   }
+  next();
+}
+
+export async function requireManagerBranch(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ error: 'Not authenticated.' });
+    return;
+  }
+  const account = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { role: true, isActive: true },
+  });
+  if (!account || !account.isActive || account.role !== req.user.role) {
+    res.status(403).json({ error: 'This account is inactive or its role has changed.' });
+    return;
+  }
+
+  const rawBranchId = req.get('X-Branch-Id') ?? req.query.branchId;
+  const branchId = rawBranchId === undefined ? req.user.branchId : Number(rawBranchId);
+  if (!Number.isInteger(branchId) || !branchId || branchId <= 0) {
+    res.status(400).json({ error: 'A valid branch selection is required.' });
+    return;
+  }
+
+  if (req.user.role === 'BRANCH_MANAGER') {
+    const assignment = await prisma.branchManagerAssignment.findUnique({
+      where: { userId_branchId: { userId: req.user.id, branchId } },
+      select: { branchId: true },
+    });
+    if (!assignment) {
+      res.status(403).json({ error: 'You are not assigned to this branch.' });
+      return;
+    }
+  } else if (req.user.role === 'ADMIN' || req.user.role === 'HQ_MANAGER') {
+    const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } });
+    if (!branch) {
+      res.status(404).json({ error: 'Branch not found.' });
+      return;
+    }
+  } else {
+    res.status(403).json({ error: 'Access denied.' });
+    return;
+  }
+
+  req.managerBranchId = branchId;
+  req.user.branchId = branchId;
   next();
 }

@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import type { Role } from '@prisma/client';
+import type { Role } from '../generated/prisma/index.js';
 import prisma from './prisma.js';
 
 const BRANCHES = [

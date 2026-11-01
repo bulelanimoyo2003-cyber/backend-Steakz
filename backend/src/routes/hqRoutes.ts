@@ -28,7 +28,7 @@ router.get('/orders', async (_req: Request, res: Response) => {
 
 router.get('/staff', async (_req: Request, res: Response) => {
   const staff = await prisma.user.findMany({
-    where: { role: { in: ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'HQ_MANAGER'] } },
+    where: { role: { in: ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER', 'HQ_MANAGER'] } },
     select: {
       id: true,
       name: true,

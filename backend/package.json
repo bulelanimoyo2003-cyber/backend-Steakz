@@ -4,26 +4,27 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon --watch src --exec tsx src/index.ts",
-    "build": "tsc --build",
+    "build": "prisma generate && tsc --build && node scripts/prepare-generated-client.cjs",
     "start": "node dist/index.js",
+    "test:e2e:postgresql": "node scripts/e2e_postgresql_delivery_test.cjs",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.9.3",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^5.2.1",
-    "jsonwebtoken": "^9.0.3",
-    "@types/cors": "^2.8.19",
-    "@types/jsonwebtoken": "^9.0.10"
+    "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
-    
     "nodemon": "^3.1.14",
+    "pg": "^8.16.3",
     "prisma": "^6.19.3",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2"

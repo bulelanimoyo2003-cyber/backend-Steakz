@@ -1,10 +1,21 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
-import { verifyToken, requireRole, requireBranch } from '../middleware/auth.js';
+import { verifyToken, requireRole, requireManagerBranch } from '../middleware/auth.js';
 
 const router = Router();
-router.use(verifyToken, requireRole(['BRANCH_MANAGER']), requireBranch);
+router.use(verifyToken, requireRole(['BRANCH_MANAGER']));
+
+router.get('/branches', async (req: Request, res: Response) => {
+  const assignments = await prisma.branchManagerAssignment.findMany({
+    where: { userId: req.user!.id },
+    include: { branch: { select: { id: true, name: true, address: true, isActive: true } } },
+    orderBy: { branchId: 'asc' },
+  });
+  res.json(assignments.map(({ branch }) => branch));
+});
+
+router.use(requireManagerBranch);
 
 router.get('/overview', async (req: Request, res: Response) => {
   const branchId = req.user!.branchId!;
@@ -26,6 +37,8 @@ router.get('/orders', async (req: Request, res: Response) => {
     include: {
       items: { include: { menuItem: true } },
       customer: { select: { name: true } },
+      branch: { select: { id: true, name: true } },
+      assignedDriver: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -35,7 +48,10 @@ router.get('/orders', async (req: Request, res: Response) => {
 router.get('/staff', async (req: Request, res: Response) => {
   const branchId = req.user!.branchId!;
   const staff = await prisma.user.findMany({
-    where: { branchId, role: { in: ['CHEF', 'CASHIER', 'BRANCH_MANAGER'] } },
+    where: {
+      role: { in: ['CHEF', 'CASHIER', 'BRANCH_MANAGER', 'DELIVERY_DRIVER'] },
+      OR: [{ branchId }, { managedBranches: { some: { branchId } } }],
+    },
     select: { id: true, name: true, role: true, salary: true, isActive: true },
     orderBy: { id: 'asc' },
   });
@@ -48,7 +64,7 @@ router.get('/bookings', async (req: Request, res: Response) => {
     where: { table: { branchId } },
     include: {
       customer: { select: { name: true } },
-      table: { select: { tableNumber: true } },
+      table: { select: { tableNumber: true, branch: { select: { id: true, name: true } } } },
     },
     orderBy: { date: 'asc' },
   });

@@ -14,11 +14,12 @@ router.get('/branches/:id', async (req: Request, res: Response) => {
   const branch = await prisma.branch.findUnique({
     where: { id },
     include: {
+      // Inactive locations remain available to staff for historical work, not to customers.
       tables: { where: { isAvailable: true } },
       menuItems: { where: { isAvailable: true } },
     },
   });
-  if (!branch) {
+  if (!branch || !branch.isActive) {
     res.status(404).json({ error: 'Branch not found.' });
     return;
   }
@@ -38,6 +39,7 @@ router.get('/tables/:id/availability', async (req: Request, res: Response) => {
       tableId: id,
       date: new Date(date),
       status: { in: ['PENDING', 'CONFIRMED'] },
+      table: { branch: { isActive: true } },
     },
   });
 

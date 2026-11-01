@@ -171,6 +171,10 @@ router.patch('/orders/:id/deliver', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Order not found in your branch.' });
       return;
     }
+    if (order.orderType === 'DELIVERY') {
+      res.status(409).json({ error: 'Delivery orders must be marked delivered by the assigned driver.' });
+      return;
+    }
     const updated = await prisma.order.update({ where: { id }, data: { status: 'DELIVERED' } });
     await completeBookingIfOrderPaidAndDelivered(updated.id);
     res.json(updated);

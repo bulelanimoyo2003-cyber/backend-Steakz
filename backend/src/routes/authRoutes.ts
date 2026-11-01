@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import { createRequire } from 'node:module';
 import bcrypt from 'bcryptjs';
 import jwt, { type Secret } from 'jsonwebtoken';
-import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 
+const require = createRequire(import.meta.url);
+const { Prisma } = require('../generated/prisma/index.js') as typeof import('../generated/prisma/index.js');
 const router = Router();
 const JWT_SECRET: Secret = process.env.JWT_SECRET ?? 'dev-secret';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? '7d';

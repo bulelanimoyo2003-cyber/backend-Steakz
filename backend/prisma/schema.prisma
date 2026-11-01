@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
@@ -13,6 +14,19 @@ enum Role {
   CHEF
   CASHIER
   CUSTOMER
+  DELIVERY_DRIVER
+}
+
+enum OrderType {
+  DINE_IN
+  COLLECTION
+  DELIVERY
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  OUT_FOR_DELIVERY
+  DELIVERED
 }
 
 enum OrderStatus {
@@ -49,6 +63,7 @@ model Branch {
   phone         String?
   isActive      Boolean        @default(true)
   users         User[]
+  managerAssignments BranchManagerAssignment[]
   tables        Table[]
   menuItems     MenuItem[]
   orders        Order[]
@@ -65,11 +80,24 @@ model User {
   isActive  Boolean   @default(true)
   branch     Branch?   @relation(fields: [branchId], references: [id])
   branchId  Int?
+  managedBranches BranchManagerAssignment[]
   salary    Float?
   bookings  Booking[]
   orders    Order[]
+  assignedDeliveries Order[] @relation("AssignedDeliveryDriver")
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+}
+
+model BranchManagerAssignment {
+  userId   Int
+  branchId Int
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, branchId])
+  @@index([branchId])
 }
 
 model MenuItem {
@@ -123,6 +151,18 @@ model Order {
   branchId   Int
   status     OrderStatus @default(PENDING)
   paymentStatus PaymentStatus @default(UNPAID)
+  orderType OrderType @default(DINE_IN)
+  checkoutRequestId String? @unique
+  recipientName String?
+  recipientPhone String?
+  deliveryAddress String?
+  deliveryInstructions String?
+  deliveryStatus DeliveryStatus?
+  assignedDriver User? @relation("AssignedDeliveryDriver", fields: [assignedDriverId], references: [id], onDelete: SetNull)
+  assignedDriverId Int?
+  assignedAt DateTime?
+  pickedUpAt DateTime?
+  deliveredAt DateTime?
   total      Float       @default(0)
   items      OrderItem[]
   createdAt  DateTime    @default(now())

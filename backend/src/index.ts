@@ -14,6 +14,8 @@ import cashierRoutes from './routes/cashierRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import menuRoutes from './routes/menuRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import deliveryDriverRoutes from './routes/deliveryDriverRoutes.js';
+import deliveryManagementRoutes from './routes/deliveryManagementRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
@@ -40,7 +42,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Branch-Id', 'Idempotency-Key'],
 };
 
 if (!process.env.FRONTEND_URL) {
@@ -62,7 +64,7 @@ app.options('/api/auth/login', (req, res) => {
   res.header('Vary', 'Origin');
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Branch-Id, Idempotency-Key');
   return res.sendStatus(204);
 });
 
@@ -74,7 +76,7 @@ app.use((req, res, next) => {
     res.header('Vary', 'Origin');
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Branch-Id, Idempotency-Key');
   }
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
@@ -94,6 +96,8 @@ app.use('/api/cashier', cashierRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/menu', menuRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/driver', deliveryDriverRoutes);
+app.use('/api/delivery-management', deliveryManagementRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -110,6 +114,8 @@ const registeredRoutes = [
   '/api/customer',
   '/api/menu',
   '/api/public',
+  '/api/driver',
+  '/api/delivery-management',
 ];
 console.log('[Backend] Registered routes:', registeredRoutes.join(', '));
 

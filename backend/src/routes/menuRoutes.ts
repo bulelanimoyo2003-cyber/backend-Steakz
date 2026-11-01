@@ -11,7 +11,10 @@ router.get('/:branchId', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'Invalid branch ID.' });
     return;
   }
-  const items = await prisma.menuItem.findMany({ where: { branchId, isAvailable: true }, orderBy: { category: 'asc' } });
+  const items = await prisma.menuItem.findMany({
+    where: { branchId, isAvailable: true, branch: { isActive: true } },
+    orderBy: { category: 'asc' },
+  });
   res.json(items);
 });
 

@@ -5,6 +5,8 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2022",
+    "allowJs": true,
+    "checkJs": false,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
