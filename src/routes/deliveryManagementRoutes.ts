@@ -50,10 +50,13 @@ router.patch('/orders/:id/driver', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Order not found.' });
     return;
   }
+  const selectedBranchId = req.user!.role === 'BRANCH_MANAGER'
+    ? req.managerBranchId
+    : order.branchId;
   const actor = req.managerBranchId
     ? { ...req.user!, branchId: null, managedBranchIds: [req.managerBranchId] }
     : req.user!;
-  if (!canManageDeliveryOrder(actor, order)) {
+  if (!selectedBranchId || !canManageDeliveryOrder(actor, order) || order.branchId !== selectedBranchId) {
     res.status(403).json({ error: 'You cannot manage delivery orders for this branch.' });
     return;
   }
@@ -81,6 +84,7 @@ router.patch('/orders/:id/driver', async (req: Request, res: Response) => {
   const updatedCount = await prisma.order.updateMany({
     where: {
       id: orderId,
+      branchId: selectedBranchId,
       assignedDriverId: order.assignedDriverId,
       orderType: 'DELIVERY',
       status: { notIn: ['CANCELLED', 'DELIVERED'] },

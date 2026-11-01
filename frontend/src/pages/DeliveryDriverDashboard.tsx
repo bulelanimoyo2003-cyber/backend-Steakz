@@ -16,19 +16,32 @@ interface DeliveryOrder {
   branch: { name: string; address: string };
 }
 
+interface DriverProfile {
+  id: number;
+  name: string;
+  email: string;
+  branch: { id: number; name: string; address: string };
+}
+
 export default function DeliveryDriverDashboard() {
   const { user } = useAuth();
+  const [profile, setProfile] = useState<DriverProfile | null>(null);
   const [orders, setOrders] = useState<DeliveryOrder[]>([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
 
   async function loadOrders() {
     try {
-      const response = await api.get<DeliveryOrder[]>('/driver/orders');
-      setOrders(response.data);
+      const [profileResponse, ordersResponse] = await Promise.all([
+        api.get<DriverProfile>('/driver/profile'),
+        api.get<DeliveryOrder[]>('/driver/orders'),
+      ]);
+      setProfile(profileResponse.data);
+      setOrders(ordersResponse.data);
       setError('');
     } catch {
-      setError('Unable to load your assigned deliveries.');
+      setError('Unable to load your driver profile and assigned deliveries.');
     }
   }
 
@@ -39,8 +52,10 @@ export default function DeliveryDriverDashboard() {
   }, []);
 
   async function updateDelivery(orderId: number, action: 'pickup' | 'delivered') {
+    if (busyOrderId !== null) return;
     setError('');
     setSuccess('');
+    setBusyOrderId(orderId);
     try {
       await api.patch(`/driver/orders/${orderId}/${action}`);
       setSuccess(action === 'pickup' ? `Order #${orderId} is out for delivery.` : `Order #${orderId} marked delivered.`);
@@ -50,6 +65,8 @@ export default function DeliveryDriverDashboard() {
         ? (requestError as { response?: { data?: { error?: string } } }).response?.data?.error
         : undefined;
       setError(message ?? 'Unable to update delivery status. Refresh and try again.');
+    } finally {
+      setBusyOrderId(null);
     }
   }
 
@@ -90,15 +107,20 @@ export default function DeliveryDriverDashboard() {
               <button
                 className="btn btn-primary"
                 type="button"
-                disabled={order.status !== 'DONE'}
+                disabled={order.status !== 'DONE' || busyOrderId !== null}
                 onClick={() => void updateDelivery(order.id, 'pickup')}
               >
                 Picked up / Out for delivery
               </button>
             )}
             {order.deliveryStatus === 'OUT_FOR_DELIVERY' && (
-              <button className="btn btn-primary" type="button" onClick={() => void updateDelivery(order.id, 'delivered')}>
-                Confirm delivered
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={busyOrderId !== null}
+                onClick={() => void updateDelivery(order.id, 'delivered')}
+              >
+                Mark delivered
               </button>
             )}
             {order.deliveryStatus === 'ASSIGNED' && order.status !== 'DONE' && (
@@ -114,7 +136,12 @@ export default function DeliveryDriverDashboard() {
     <main className="page driver-dashboard">
       <header className="page-header">
         <h1>Delivery Dashboard</h1>
-        <p>Welcome, {user?.name}. Deliveries assigned to you are shown here.</p>
+        <p>Welcome, {profile?.name ?? user?.name}.</p>
+        <p>
+          Assigned restaurant branch: {profile
+            ? `${profile.branch.name} · ${profile.branch.address}`
+            : 'Loading branch assignment…'}
+        </p>
       </header>
       {error && <div className="alert alert-error" role="alert">{error}</div>}
       {success && <div className="alert alert-success" role="status">{success}</div>}
