@@ -198,6 +198,7 @@ async function runWorkflow(api, fixtures) {
   const orders = [];
   let privilegedAssignmentChecks = 0;
   let crossBranchManagerDenials = 0;
+  let readyOrderAssignments = 0;
   for (const { branch, chef, driver, menuItem } of fixtures.branchFixtures) {
     const placed = await api('/customer/orders', {
       method: 'POST',
@@ -249,14 +250,38 @@ async function runWorkflow(api, fixtures) {
     assert.equal(wrongBranchSelection.status, 403);
     crossBranchManagerDenials += 1;
 
+    const login = await api('/auth/login', {
+      method: 'POST',
+      body: { email: driver.email, password: 'Isolated-Test-1234!' },
+    });
+    assert.equal(login.status, 200, `${branch.name} driver login`);
+    assert.equal(login.data.user.role, 'DELIVERY_DRIVER');
+    assert.equal(login.data.user.branchId, branch.id);
+    const driverToken = login.data.token;
+
+    const profile = await api('/driver/profile', { token: driverToken });
+    assert.equal(profile.status, 200);
+    assert.equal(profile.data.branch.name, branch.name);
+
+    const chefToken = tokenFor(chef);
+    assert.equal((await api(`/chef/orders/${orderId}/preparing`, {
+      method: 'PATCH', token: chefToken,
+    })).status, 200);
+    assert.equal((await api(`/chef/orders/${orderId}/done`, {
+      method: 'PATCH', token: chefToken,
+    })).status, 200);
+
     const assigned = await api(`/delivery-management/orders/${orderId}/driver`, {
       method: 'PATCH',
       token: managerToken,
       branchId: branch.id,
       body: { driverId: driver.id },
     });
-    assert.equal(assigned.status, 200, `${branch.name} driver assignment`);
+    assert.equal(assigned.status, 200, `${branch.name} DONE order driver assignment`);
+    assert.equal(assigned.data.status, 'DONE');
+    assert.equal(assigned.data.deliveryStatus, 'ASSIGNED');
     assert.equal(assigned.data.assignedDriverId, driver.id);
+    readyOrderAssignments += 1;
 
     if (branch.name === expectedBranches[0]) {
       for (const token of [adminToken, hqManagerToken]) {
@@ -271,35 +296,25 @@ async function runWorkflow(api, fixtures) {
       }
     }
 
-    const login = await api('/auth/login', {
-      method: 'POST',
-      body: { email: driver.email, password: 'Isolated-Test-1234!' },
+    const managerAssignedOrders = await api('/branch-manager/orders', {
+      token: managerToken,
+      branchId: branch.id,
     });
-    assert.equal(login.status, 200, `${branch.name} driver login`);
-    assert.equal(login.data.user.role, 'DELIVERY_DRIVER');
-    assert.equal(login.data.user.branchId, branch.id);
-    const driverToken = login.data.token;
+    const managerAssignedOrder = managerAssignedOrders.data.find((order) => order.id === orderId);
+    assert.equal(managerAssignedOrder.deliveryStatus, 'ASSIGNED');
+    assert.equal(managerAssignedOrder.assignedDriverId, driver.id);
 
-    const profile = await api('/driver/profile', { token: driverToken });
-    assert.equal(profile.status, 200);
-    assert.equal(profile.data.branch.name, branch.name);
-
-    const tooEarly = await api(`/driver/orders/${orderId}/pickup`, {
-      method: 'PATCH',
-      token: driverToken,
-    });
-    assert.equal(tooEarly.status, 409);
+    const customerAssignedOrders = await api('/customer/orders', { token: customerToken });
+    const customerAssignedOrder = customerAssignedOrders.data.find((order) => order.id === orderId);
+    assert.equal(customerAssignedOrder.status, 'DONE');
+    assert.equal(customerAssignedOrder.deliveryStatus, 'ASSIGNED');
+    assert.equal(customerAssignedOrder.assignedDriver.id, driver.id);
 
     const ownOrders = await api('/driver/orders', { token: driverToken });
     assert.equal(ownOrders.status, 200);
     assert.deepEqual(ownOrders.data.map((order) => order.id), [orderId]);
-    const chefToken = tokenFor(chef);
-    assert.equal((await api(`/chef/orders/${orderId}/preparing`, {
-      method: 'PATCH', token: chefToken,
-    })).status, 200);
-    assert.equal((await api(`/chef/orders/${orderId}/done`, {
-      method: 'PATCH', token: chefToken,
-    })).status, 200);
+    assert.equal(ownOrders.data[0].status, 'DONE');
+    assert.equal(ownOrders.data[0].deliveryStatus, 'ASSIGNED');
 
     const pickedUp = await api(`/driver/orders/${orderId}/pickup`, {
       method: 'PATCH',
@@ -307,6 +322,19 @@ async function runWorkflow(api, fixtures) {
     });
     assert.equal(pickedUp.status, 200);
     assert.ok(pickedUp.data.pickedUpAt);
+    const managerOutForDelivery = await api('/branch-manager/orders', {
+      token: managerToken,
+      branchId: branch.id,
+    });
+    assert.equal(
+      managerOutForDelivery.data.find((order) => order.id === orderId).deliveryStatus,
+      'OUT_FOR_DELIVERY',
+    );
+    const customerOutForDelivery = await api('/customer/orders', { token: customerToken });
+    assert.equal(
+      customerOutForDelivery.data.find((order) => order.id === orderId).deliveryStatus,
+      'OUT_FOR_DELIVERY',
+    );
     assert.equal((await api(`/driver/orders/${orderId}/pickup`, {
       method: 'PATCH',
       token: driverToken,
@@ -318,6 +346,21 @@ async function runWorkflow(api, fixtures) {
     });
     assert.equal(delivered.status, 200);
     assert.ok(delivered.data.deliveredAt);
+    const managerDeliveredOrders = await api('/branch-manager/orders', {
+      token: managerToken,
+      branchId: branch.id,
+    });
+    assert.equal(
+      managerDeliveredOrders.data.find((order) => order.id === orderId).deliveryStatus,
+      'DELIVERED',
+    );
+    const customerDeliveredOrders = await api('/customer/orders', { token: customerToken });
+    assert.equal(
+      customerDeliveredOrders.data.find((order) => order.id === orderId).deliveryStatus,
+      'DELIVERED',
+    );
+    const driverHistory = await api('/driver/orders', { token: driverToken });
+    assert.equal(driverHistory.data.find((order) => order.id === orderId).deliveryStatus, 'DELIVERED');
     assert.equal((await api(`/driver/orders/${orderId}/delivered`, {
       method: 'PATCH',
       token: driverToken,
@@ -356,6 +399,7 @@ async function runWorkflow(api, fixtures) {
   return {
     activeBranches: expectedBranches,
     workflows: orders.length,
+    readyOrderAssignments,
     crossBranchDriverDenials: crossBranchDenials,
     crossBranchManagerDenials,
     privilegedAssignmentChecks,
