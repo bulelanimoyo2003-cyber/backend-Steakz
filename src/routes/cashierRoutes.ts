@@ -63,6 +63,46 @@ router.post('/orders', async (req: Request, res: Response) => {
       return;
     }
 
+    const normalizedCustomerId = customerId === undefined || customerId === null || customerId === ''
+      ? null
+      : Number(customerId);
+    if (normalizedCustomerId !== null) {
+      if (!Number.isInteger(normalizedCustomerId) || normalizedCustomerId <= 0) {
+        res.status(400).json({ error: 'customerId must identify a customer account.' });
+        return;
+      }
+      const customer = await prisma.user.findFirst({
+        where: { id: normalizedCustomerId, role: 'CUSTOMER', isActive: true },
+        select: { id: true },
+      });
+      if (!customer) {
+        res.status(400).json({ error: 'customerId must identify an active customer account.' });
+        return;
+      }
+    }
+
+    const normalizedBookingId = bookingId === undefined || bookingId === null || bookingId === ''
+      ? null
+      : Number(bookingId);
+    if (normalizedBookingId !== null) {
+      if (!Number.isInteger(normalizedBookingId) || normalizedBookingId <= 0 || normalizedCustomerId === null) {
+        res.status(400).json({ error: 'bookingId must identify a reservation at this branch.' });
+        return;
+      }
+      const booking = await prisma.booking.findFirst({
+        where: {
+          id: normalizedBookingId,
+          table: { branchId },
+          customerId: normalizedCustomerId,
+        },
+        select: { id: true },
+      });
+      if (!booking) {
+        res.status(400).json({ error: 'bookingId must identify a reservation at this branch and customer.' });
+        return;
+      }
+    }
+
     // Normalize and validate items
     const normItems = items.map((it, idx) => {
       const menuItemId = Number(it.menuItemId);
@@ -92,8 +132,8 @@ router.post('/orders', async (req: Request, res: Response) => {
     const order = await prisma.order.create({
       data: {
         branchId,
-        customerId: customerId ? Number(customerId) : null,
-        bookingId: bookingId ? Number(bookingId) : null,
+        customerId: normalizedCustomerId,
+        bookingId: normalizedBookingId,
         total,
         items: {
           create: normItems.map((item) => ({
@@ -162,11 +202,22 @@ router.patch('/orders/:id/pay', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Order not found in your branch.' });
       return;
     }
-    const updated = await prisma.order.update({
-      where: { id },
+    const updatedCount = await prisma.order.updateMany({
+      where: { id, branchId },
       data: { paymentStatus: 'PAID' },
+    });
+    if (updatedCount.count !== 1) {
+      res.status(403).json({ error: 'Order not found in your branch.' });
+      return;
+    }
+    const updated = await prisma.order.findFirst({
+      where: { id, branchId },
       select: { id: true, status: true, paymentStatus: true, orderType: true },
     });
+    if (!updated) {
+      res.status(404).json({ error: 'Order not found.' });
+      return;
+    }
     await completeBookingIfOrderPaidAndDelivered(updated.id);
     res.json(updated);
   } catch (error) {
@@ -188,7 +239,19 @@ router.patch('/orders/:id/deliver', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'Delivery orders can only be marked delivered by their assigned driver.' });
       return;
     }
-    const updated = await prisma.order.update({ where: { id }, data: { status: 'DELIVERED' } });
+    const updatedCount = await prisma.order.updateMany({
+      where: { id, branchId, orderType: { not: 'DELIVERY' } },
+      data: { status: 'DELIVERED' },
+    });
+    if (updatedCount.count !== 1) {
+      res.status(409).json({ error: 'Order status changed or order not found in your branch.' });
+      return;
+    }
+    const updated = await prisma.order.findFirst({ where: { id, branchId } });
+    if (!updated) {
+      res.status(404).json({ error: 'Order not found.' });
+      return;
+    }
     await completeBookingIfOrderPaidAndDelivered(updated.id);
     res.json(updated);
   } catch (error) {

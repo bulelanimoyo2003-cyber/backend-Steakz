@@ -25,7 +25,7 @@ export default function BranchesPage() {
     <div className="page">
       <div className="page-header">
         <h1>Locations</h1>
-        <p>Browse all Steakz branches and access each menu.</p>
+        <p>Browse our active Steakz locations and access each menu.</p>
       </div>
 
       {loading ? (

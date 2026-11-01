@@ -11,6 +11,11 @@ router.get('/branches', async (_req: Request, res: Response) => {
 
 router.get('/branches/:id', async (req: Request, res: Response) => {
   const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid branch ID.' });
+    return;
+  }
+
   const branch = await prisma.branch.findUnique({
     where: { id },
     include: {
@@ -18,8 +23,8 @@ router.get('/branches/:id', async (req: Request, res: Response) => {
       menuItems: { where: { isAvailable: true } },
     },
   });
-  if (!branch) {
-    res.status(404).json({ error: 'Branch not found.' });
+  if (!branch || !branch.isActive) {
+    res.status(404).json({ error: 'This location is no longer active. Please select an active location.' });
     return;
   }
   res.json(branch);
@@ -30,6 +35,15 @@ router.get('/tables/:id/availability', async (req: Request, res: Response) => {
   const date = req.query.date as string;
   if (!id || !date) {
     res.status(400).json({ error: 'tableId and date are required.' });
+    return;
+  }
+
+  const table = await prisma.table.findUnique({
+    where: { id },
+    include: { branch: { select: { isActive: true } } },
+  });
+  if (!table || !table.branch.isActive) {
+    res.status(404).json({ error: 'This location is no longer active. Please select an active location.' });
     return;
   }
 

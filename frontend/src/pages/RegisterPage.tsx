@@ -35,7 +35,7 @@ export default function RegisterPage() {
           Join Steakz
         </span>
         <h2 style={{ textAlign: 'center', marginBottom: '0.3rem' }}>Create Account</h2>
-        <p style={{ textAlign: 'center' }}>Start reserving tables at any of our 7 locations</p>
+        <p style={{ textAlign: 'center' }}>Start reserving a table at an active Steakz location</p>
         {error && <div className="alert alert-error">⚠ {error}</div>}
         {success && <div className="alert alert-success">✓ {success}</div>}
         <form onSubmit={handleSubmit}>

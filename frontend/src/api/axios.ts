@@ -42,4 +42,17 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const requestUrl = error.config?.url ?? '';
+    const isAuthenticationRequest = /^\/auth\/(login|register)(?:\/|$)/.test(requestUrl);
+    if (error.response?.status === 401 && !isAuthenticationRequest) {
+      window.dispatchEvent(new Event('steakz:session-expired'));
+    }
+
+    return Promise.reject(error);
+  },
+);
+
 export default api;

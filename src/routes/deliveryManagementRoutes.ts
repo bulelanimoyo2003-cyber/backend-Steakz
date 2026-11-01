@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
-import { verifyToken, requireRole } from '../middleware/auth.js';
+import { verifyToken, requireRole, requireManagerBranch } from '../middleware/auth.js';
 import {
   canAssignDelivery,
   canManageDeliveryOrder,
@@ -9,18 +9,18 @@ import {
 } from '../lib/deliveryWorkflow.js';
 
 const router = Router();
-router.use(verifyToken, requireRole(['ADMIN', 'HQ_MANAGER', 'BRANCH_MANAGER']));
+router.use(verifyToken, requireRole(['ADMIN', 'HQ_MANAGER', 'BRANCH_MANAGER']), requireManagerBranch);
 
 router.get('/drivers', async (req: Request, res: Response) => {
   const requestedBranchId = Number(req.query.branchId);
   let branchId: number;
 
   if (req.user!.role === 'BRANCH_MANAGER') {
-    if (!req.user!.branchId || (req.query.branchId && requestedBranchId !== req.user!.branchId)) {
-      res.status(403).json({ error: 'You can only view drivers in your branch.' });
+    if (!req.managerBranchId || (req.query.branchId && requestedBranchId !== req.managerBranchId)) {
+      res.status(403).json({ error: 'You can only view drivers for the selected assigned location.' });
       return;
     }
-    branchId = req.user!.branchId;
+    branchId = req.managerBranchId;
   } else {
     if (!Number.isInteger(requestedBranchId) || requestedBranchId <= 0) {
       res.status(400).json({ error: 'A valid branchId is required.' });
@@ -50,7 +50,10 @@ router.patch('/orders/:id/driver', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Order not found.' });
     return;
   }
-  if (!canManageDeliveryOrder(req.user!, order)) {
+  const actor = req.managerBranchId
+    ? { ...req.user!, branchId: null, managedBranchIds: [req.managerBranchId] }
+    : req.user!;
+  if (!canManageDeliveryOrder(actor, order)) {
     res.status(403).json({ error: 'You cannot manage delivery orders for this branch.' });
     return;
   }

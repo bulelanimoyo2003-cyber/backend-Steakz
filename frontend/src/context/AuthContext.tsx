@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 interface AuthUser {
   id: number;
@@ -62,6 +62,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initialAuth = getStoredAuth();
   const [user, setUser] = useState<AuthUser | null>(initialAuth.user);
   const [token, setToken] = useState<string | null>(initialAuth.token);
+
+  useEffect(() => {
+    function handleSessionExpired() {
+      localStorage.removeItem('steakz_token');
+      localStorage.removeItem('steakz_user');
+      setToken(null);
+      setUser(null);
+    }
+
+    window.addEventListener('steakz:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('steakz:session-expired', handleSessionExpired);
+  }, []);
 
   function login(t: string, u: AuthUser) {
     localStorage.setItem('steakz_token', t);

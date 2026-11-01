@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import prisma from '../lib/prisma.js';
 
 declare global {
   namespace Express {
@@ -9,6 +10,7 @@ declare global {
         role: string;
         branchId: number | null;
       };
+      managerBranchId?: number;
     }
   }
 }
@@ -55,10 +57,47 @@ export function requireRole(roles: string[]) {
   };
 }
 
-export function requireBranch(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user?.branchId) {
-    res.status(403).json({ error: 'No branch assigned to this account.' });
+export async function requireBranch(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ error: 'Not authenticated.' });
     return;
   }
+
+  const account = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { role: true, branchId: true, isActive: true },
+  });
+  if (!account || !account.isActive || account.role !== req.user.role || !account.branchId) {
+    res.status(403).json({ error: 'This account has no active branch assignment.' });
+    return;
+  }
+
+  req.user.branchId = account.branchId;
+  next();
+}
+
+export async function requireManagerBranch(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (req.user?.role !== 'BRANCH_MANAGER') {
+    next();
+    return;
+  }
+
+  const rawBranchId = req.header('X-Branch-Id');
+  const branchId = rawBranchId === undefined ? NaN : Number(rawBranchId);
+  if (!Number.isInteger(branchId) || branchId <= 0) {
+    res.status(400).json({ error: 'Choose a specific assigned location before managing branch records.' });
+    return;
+  }
+
+  const assignment = await prisma.branchManagerAssignment.findUnique({
+    where: { userId_branchId: { userId: req.user.id, branchId } },
+    select: { branchId: true },
+  });
+  if (!assignment) {
+    res.status(403).json({ error: 'You are not assigned to manage this location.' });
+    return;
+  }
+
+  req.managerBranchId = assignment.branchId;
   next();
 }

@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
+import { canReserveTable, validateBookingDetails } from '../lib/bookingValidation.js';
+import { isSameCheckoutRequest, type CheckoutSnapshot } from '../lib/orderIdempotency.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['CUSTOMER']));
@@ -24,21 +27,36 @@ router.post('/bookings', async (req: Request, res: Response) => {
     date?: string;
   };
 
-  if (!tableId || !guestCount || !date) {
-    res.status(400).json({ error: 'tableId, guestCount and date are required.' });
+  const validationError = validateBookingDetails(tableId, guestCount, date);
+  if (validationError) {
+    res.status(400).json({ error: validationError });
     return;
   }
 
-  const table = (await prisma.table.findUnique({ where: { id: tableId } })) as any;
-  if (!table || table.status !== 'AVAILABLE') {
+  const table = await prisma.table.findUnique({
+    where: { id: tableId! },
+    include: { branch: { select: { isActive: true } } },
+  });
+  if (table && !table.branch.isActive) {
+    res.status(400).json({ error: 'This location is no longer active. Please select an active location.' });
+    return;
+  }
+  if (!table || !canReserveTable(table)) {
     res.status(400).json({ error: 'Table is not available.' });
     return;
   }
 
+  const capacityError = validateBookingDetails(tableId, guestCount, date, table.capacity);
+  if (capacityError) {
+    res.status(400).json({ error: capacityError });
+    return;
+  }
+
+  const reservationDate = new Date(date ?? '');
   const existingBooking = await prisma.booking.findFirst({
     where: {
       tableId,
-      date: new Date(date),
+      date: reservationDate,
       status: { in: ['PENDING', 'CONFIRMED'] },
     },
   });
@@ -48,19 +66,23 @@ router.post('/bookings', async (req: Request, res: Response) => {
     return;
   }
 
-  const booking = await prisma.booking.create({
-    data: {
-      customerId,
-      tableId,
-      guestCount,
-      date: new Date(date),
-    },
-    include: { table: { include: { branch: { select: { name: true } } } } },
-  });
+  const booking = await prisma.$transaction(async (transaction) => {
+    const createdBooking = await transaction.booking.create({
+      data: {
+        customerId,
+        tableId: table.id,
+        guestCount: guestCount!,
+        date: reservationDate,
+      },
+      include: { table: { include: { branch: { select: { name: true } } } } },
+    });
 
-  await prisma.table.update({
-    where: { id: tableId },
-    data: { status: 'RESERVED' as any },
+    await transaction.table.update({
+      where: { id: table.id },
+      data: { status: 'RESERVED' },
+    });
+
+    return createdBooking;
   });
 
   res.status(201).json(booking);
@@ -75,8 +97,14 @@ router.delete('/bookings/:id', async (req: Request, res: Response) => {
     res.status(403).json({ error: 'Booking not found.' });
     return;
   }
-
-  await prisma.booking.update({ where: { id }, data: { status: 'CANCELLED' } });
+  const updatedCount = await prisma.booking.updateMany({
+    where: { id, customerId, status: { in: ['PENDING', 'CONFIRMED'] } },
+    data: { status: 'CANCELLED' },
+  });
+  if (updatedCount.count !== 1) {
+    res.status(409).json({ error: 'Reservation can no longer be cancelled.' });
+    return;
+  }
 
   if (booking.table?.status === 'RESERVED') {
     await prisma.table.update({ where: { id: booking.tableId }, data: { status: 'AVAILABLE' as any } });
@@ -101,6 +129,11 @@ router.get('/orders', async (req: Request, res: Response) => {
 
 router.post('/orders', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
+  const checkoutRequestId = req.get('Idempotency-Key');
+  if (checkoutRequestId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(checkoutRequestId)) {
+    res.status(400).json({ error: 'Idempotency-Key must be a UUID.' });
+    return;
+  }
   const { bookingId: requestedBookingId, branchId: requestedBranchId, items, orderType: requestedOrderType } = req.body as {
     bookingId?: number;
     items?: { menuItemId: number; quantity: number }[];
@@ -141,10 +174,18 @@ router.post('/orders', async (req: Request, res: Response) => {
     }
     const booking = await prisma.booking.findUnique({
       where: { id: requestedBookingId },
-      include: { table: true },
+      include: { table: { include: { branch: { select: { isActive: true } } } } },
     });
     if (!booking || booking.customerId !== customerId) {
       res.status(403).json({ error: 'Booking not found.' });
+      return;
+    }
+    if (requestedBranchId !== undefined && requestedBranchId !== booking.table.branchId) {
+      res.status(400).json({ error: 'Dine-in orders must use the location assigned to the reservation.' });
+      return;
+    }
+    if (!booking.table.branch.isActive) {
+      res.status(400).json({ error: 'This location is no longer active. Please select an active location.' });
       return;
     }
     bookingId = requestedBookingId;
@@ -156,7 +197,7 @@ router.post('/orders', async (req: Request, res: Response) => {
     }
     const branch = await prisma.branch.findUnique({ where: { id: requestedBranchId } });
     if (!branch || !branch.isActive) {
-      res.status(400).json({ error: 'The selected branch is unavailable.' });
+      res.status(400).json({ error: 'This location is no longer active. Please select an active location.' });
       return;
     }
     resolvedBranchId = branch.id;
@@ -208,26 +249,82 @@ router.post('/orders', async (req: Request, res: Response) => {
   const priceMap = Object.fromEntries(menuItems.map((item: { id: number; price: number }) => [item.id, item.price]));
   const total = items.reduce((sum, item) => sum + (priceMap[item.menuItemId] ?? 0) * item.quantity, 0);
 
-  const order = await prisma.order.create({
-    data: {
-      customerId,
-      bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
-      branchId: resolvedBranchId,
-      orderType,
-      ...deliveryDetails,
-      total,
-      items: {
-        create: items.map((item) => ({
-          menuItemId: item.menuItemId,
-          quantity: item.quantity,
-          unitPrice: priceMap[item.menuItemId] ?? 0,
-        })),
-      },
-    },
-    include: { items: { include: { menuItem: true } } },
-  });
+  const requestedCheckout: CheckoutSnapshot = {
+    customerId,
+    branchId: resolvedBranchId,
+    bookingId: orderType === 'DINE_IN' ? bookingId ?? null : null,
+    orderType,
+    recipientName: deliveryDetails?.recipientName ?? null,
+    recipientPhone: deliveryDetails?.recipientPhone ?? null,
+    deliveryAddress: deliveryDetails?.deliveryAddress ?? null,
+    deliveryInstructions: deliveryDetails?.deliveryInstructions ?? null,
+    items: items.map((item) => ({
+      menuItemId: item.menuItemId,
+      quantity: item.quantity,
+      unitPrice: priceMap[item.menuItemId] ?? 0,
+    })),
+  };
 
-  res.status(201).json(order);
+  const findExistingCheckout = () => checkoutRequestId
+    ? prisma.order.findUnique({
+      where: { checkoutRequestId },
+      include: { items: { include: { menuItem: true } } },
+    })
+    : null;
+
+  const existingOrder = await findExistingCheckout();
+  if (existingOrder) {
+    if (existingOrder.customerId !== customerId) {
+      res.status(409).json({ error: 'This checkout key has already been used.' });
+      return;
+    }
+
+    if (!isSameCheckoutRequest(existingOrder, requestedCheckout)) {
+      res.status(409).json({ error: 'This checkout key was already used for a different order.' });
+      return;
+    }
+
+    res.status(200).json(existingOrder);
+    return;
+  }
+
+  try {
+    const order = await prisma.order.create({
+      data: {
+        customerId,
+        bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
+        branchId: resolvedBranchId,
+        orderType,
+        checkoutRequestId,
+        ...deliveryDetails,
+        total,
+        items: {
+          create: items.map((item) => ({
+            menuItemId: item.menuItemId,
+            quantity: item.quantity,
+            unitPrice: priceMap[item.menuItemId] ?? 0,
+          })),
+        },
+      },
+      include: { items: { include: { menuItem: true } } },
+    });
+
+    res.status(201).json(order);
+  } catch (error) {
+    if (checkoutRequestId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const concurrentOrder = await findExistingCheckout();
+      if (concurrentOrder?.customerId === customerId
+        && isSameCheckoutRequest(concurrentOrder, requestedCheckout)) {
+        res.status(200).json(concurrentOrder);
+        return;
+      }
+      if (concurrentOrder) {
+        res.status(409).json({ error: 'This checkout key has already been used.' });
+        return;
+      }
+    }
+    throw error;
+  }
 });
 
 function buildReceiptNumber(order: { id: number; createdAt: Date }) {

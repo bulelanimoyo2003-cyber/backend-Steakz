@@ -1,45 +1,32 @@
-(async () => {
-  try {
-    const base = 'http://localhost:3001/api';
-    const email = 'steakz.city.centre.cashier@steakz.com';
-    const password = 'password123';
+import assert from 'node:assert/strict';
+import { withIsolatedApi } from './e2e_test_environment.js';
 
-    console.log('Logging in...');
-    const loginRes = await fetch(`${base}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const loginBody = await loginRes.json();
-    console.log('Login status:', loginRes.status);
-    console.log(loginBody);
-    if (!loginBody.token) return;
-    const token = loginBody.token;
+await withIsolatedApi(async (baseUrl) => {
+  const api = `${baseUrl}/api`;
+  const loginResponse = await fetch(`${api}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'steakz.city.centre.cashier@steakz.com', password: 'password123' }),
+  });
+  const login = await loginResponse.json();
+  assert.equal(loginResponse.status, 200);
 
-    console.log('\nFetching menu...');
-    const menuRes = await fetch(`${base}/cashier/menu`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const menu = await menuRes.json();
-    console.log('Menu status:', menuRes.status);
-    console.log(menu);
+  const menuResponse = await fetch(`${api}/cashier/menu`, {
+    headers: { Authorization: `Bearer ${login.token}` },
+  });
+  const menu = await menuResponse.json();
+  assert.equal(menuResponse.status, 200);
+  assert.ok(menu.length > 0);
 
-    if (!Array.isArray(menu) || menu.length === 0) {
-      console.log('No menu items to order');
-      return;
-    }
-
-    const item = menu[0];
-    console.log('\nPosting order for item id', item.id);
-    const orderRes = await fetch(`${base}/cashier/orders`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ items: [{ menuItemId: item.id, quantity: 2 }] }),
-    });
-    const orderBody = await orderRes.json();
-    console.log('Order status:', orderRes.status);
-    console.log(orderBody);
-  } catch (e) {
-    console.error('Script error', e);
-  }
-})();
+  const orderResponse = await fetch(`${api}/cashier/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${login.token}` },
+    body: JSON.stringify({ items: [{ menuItemId: menu[0].id, quantity: 2 }] }),
+  });
+  const order = await orderResponse.json();
+  assert.equal(orderResponse.status, 201);
+  console.log(`Cashier order creation passed in isolated database for order ${order.id}.`);
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

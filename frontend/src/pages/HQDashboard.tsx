@@ -70,7 +70,7 @@ export default function HQDashboard() {
     <div className="page">
       <div className="page-header">
         <h1>HQ Overview</h1>
-        <p>Consolidated view across all 7 locations</p>
+        <p>Consolidated view across all branches</p>
       </div>
 
       {error && <div className="alert alert-error">⚠ {error}</div>}

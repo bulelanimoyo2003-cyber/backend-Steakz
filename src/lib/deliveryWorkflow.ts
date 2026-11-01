@@ -10,6 +10,7 @@ export interface DeliveryActor {
   id: number;
   role: string;
   branchId: number | null;
+  managedBranchIds?: number[];
 }
 
 export interface DeliveryDriver {
@@ -21,7 +22,8 @@ export interface DeliveryDriver {
 
 export function canManageDeliveryOrder(actor: DeliveryActor, order: DeliveryOrderState): boolean {
   if (actor.role === 'ADMIN' || actor.role === 'HQ_MANAGER') return true;
-  return actor.role === 'BRANCH_MANAGER' && actor.branchId === order.branchId;
+  return actor.role === 'BRANCH_MANAGER'
+    && (actor.branchId === order.branchId || actor.managedBranchIds?.includes(order.branchId) === true);
 }
 
 export function canAccessAssignedDelivery(actor: DeliveryActor, order: DeliveryOrderState): boolean {

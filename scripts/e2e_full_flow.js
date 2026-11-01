@@ -5,7 +5,9 @@
  * Tests: Customer → Cashier → Chef → Cashier → Customer order flow
  */
 
-const BASE_URL = 'http://localhost:3001/api';
+import { withIsolatedApi } from './e2e_test_environment.js';
+
+let BASE_URL;
 
 async function api(method, endpoint, body = null, token = null) {
   const url = `${BASE_URL}${endpoint}`;
@@ -58,7 +60,7 @@ async function run() {
       password: 'password123',
     });
     const custToken = custLogin.token;
-    console.log(`   ✓ Customer logged in, token: ${custToken.substring(0, 20)}...`);
+    console.log('   ✓ Customer logged in');
 
     // 2. CUSTOMER: Get branches and tables
     console.log('\n2. CUSTOMER: Get branches and tables');
@@ -228,8 +230,14 @@ async function run() {
   } catch (e) {
     console.error('\n❌ E2E FULL FLOW TEST FAILED');
     console.error(`Error: ${e.message}\n`);
-    process.exit(1);
+    throw e;
   }
 }
 
-run();
+withIsolatedApi(async (baseUrl) => {
+  BASE_URL = `${baseUrl}/api`;
+  await run();
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

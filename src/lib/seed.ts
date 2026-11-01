@@ -12,6 +12,14 @@ const BRANCHES = [
   { name: 'Steakz Uptown', address: '77 Uptown Drive, Uptown' },
 ];
 
+const ACTIVE_BRANCH_NAMES = [
+  'Steakz City Centre',
+  'Steakz Northside',
+  'Steakz Southgate',
+  'Steakz Uptown',
+];
+const SHARED_BRANCH_MANAGER_EMAIL = 'steakz.city.centre.manager@steakz.com';
+
 const MENU_ITEMS = [
   { name: 'Ribeye 300g', description: 'Aged ribeye with caramelized shallots', price: 38.9, category: 'Steaks' },
   { name: 'Filet Mignon', description: 'Tender filet with truffle butter', price: 44.5, category: 'Steaks' },
@@ -48,10 +56,13 @@ const BRANCH_STAFF_ROLES = ['BRANCH_MANAGER', 'CHEF', 'CASHIER'] as const;
 
 async function ensureBranchData() {
   for (const branch of BRANCHES) {
+    const isActive = ACTIVE_BRANCH_NAMES.includes(branch.name);
     let branchRecord = await prisma.branch.findUnique({ where: { name: branch.name } });
     if (!branchRecord) {
-      branchRecord = await prisma.branch.create({ data: branch });
+      branchRecord = await prisma.branch.create({ data: { ...branch, isActive } });
       console.log(`[Seeder] Branch created: ${branch.name}`);
+    } else if (branchRecord.isActive !== isActive) {
+      branchRecord = await prisma.branch.update({ where: { id: branchRecord.id }, data: { isActive } });
     }
 
     const existingTables = await prisma.table.findMany({ where: { branchId: branchRecord.id } });
@@ -97,11 +108,41 @@ async function ensureBranchData() {
             role: member.role,
             branchId: branchRecord.id,
             salary: member.salary,
+            ...(member.role === 'BRANCH_MANAGER'
+              ? { managedBranches: { create: { branchId: branchRecord.id } } }
+              : {}),
           },
         });
         console.log(`[Seeder] User created: ${member.email}`);
+      } else if (member.role === 'BRANCH_MANAGER' && existing.role === 'BRANCH_MANAGER') {
+        await prisma.branchManagerAssignment.upsert({
+          where: { userId_branchId: { userId: existing.id, branchId: branchRecord.id } },
+          update: {},
+          create: { userId: existing.id, branchId: branchRecord.id },
+        });
       }
     }
+  }
+
+  await prisma.branch.updateMany({
+    where: { name: { notIn: ACTIVE_BRANCH_NAMES } },
+    data: { isActive: false },
+  });
+
+  const sharedManager = await prisma.user.findUnique({ where: { email: SHARED_BRANCH_MANAGER_EMAIL } });
+  if (!sharedManager || sharedManager.role !== 'BRANCH_MANAGER') {
+    throw new Error(`The configured multi-branch manager ${SHARED_BRANCH_MANAGER_EMAIL} is missing or has the wrong role.`);
+  }
+  for (const name of ACTIVE_BRANCH_NAMES) {
+    const branch = await prisma.branch.findUnique({ where: { name } });
+    if (!branch) {
+      throw new Error(`The configured active branch ${name} is missing.`);
+    }
+    await prisma.branchManagerAssignment.upsert({
+      where: { userId_branchId: { userId: sharedManager.id, branchId: branch.id } },
+      update: {},
+      create: { userId: sharedManager.id, branchId: branch.id },
+    });
   }
 }
 

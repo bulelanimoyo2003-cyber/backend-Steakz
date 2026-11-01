@@ -6,7 +6,11 @@
     "dev": "nodemon --watch src --exec tsx src/index.ts",
     "build": "tsc --build",
     "start": "node dist/index.js",
-    "test": "tsx --test src/lib/deliveryWorkflow.test.ts",
+    "test": "tsx --test src/lib/bookingValidation.test.ts src/lib/deliveryWorkflow.test.ts src/lib/customerDashboard.test.ts src/lib/orderIdempotency.test.ts",
+    "test:e2e:delivery": "node scripts/e2e_delivery_test.js",
+    "test:e2e:branches": "node scripts/e2e_active_branches_test.js",
+    "test:e2e:manager": "node scripts/e2e_multi_branch_manager_test.js",
+    "test:e2e:isolation": "node scripts/e2e_branch_isolation_test.js",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {

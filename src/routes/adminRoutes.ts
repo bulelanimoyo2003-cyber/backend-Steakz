@@ -89,6 +89,9 @@ router.post('/users', async (req: Request, res: Response) => {
         role: normalizedRole as Role,
         branchId: branchId ?? null,
         salary: salary ?? null,
+        ...(normalizedRole === 'BRANCH_MANAGER' && branchId
+          ? { managedBranches: { create: { branchId } } }
+          : {}),
       },
     });
     res.status(201).json({ message: 'User created.', userId: user.id });
@@ -139,9 +142,21 @@ router.patch('/users/:id/role', async (req: Request, res: Response) => {
   }
 
   try {
-    const user = await prisma.user.update({
-      where: { id },
-      data: { role: normalizedRole as Role, branchId: branchId ?? null },
+    const user = await prisma.$transaction(async (transaction) => {
+      const updated = await transaction.user.update({
+        where: { id },
+        data: { role: normalizedRole as Role, branchId: branchId ?? null },
+      });
+      if (normalizedRole === 'BRANCH_MANAGER' && branchId) {
+        await transaction.branchManagerAssignment.upsert({
+          where: { userId_branchId: { userId: id, branchId } },
+          update: {},
+          create: { userId: id, branchId },
+        });
+      } else {
+        await transaction.branchManagerAssignment.deleteMany({ where: { userId: id } });
+      }
+      return updated;
     });
     res.json({ message: 'Role updated.', user });
   } catch {

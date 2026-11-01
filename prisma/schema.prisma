@@ -63,6 +63,7 @@ model Branch {
   phone     String?
   isActive  Boolean    @default(true)
   users     User[]
+  managerAssignments BranchManagerAssignment[]
   tables    Table[]
   menuItems MenuItem[]
   orders    Order[]
@@ -79,12 +80,24 @@ model User {
   isActive       Boolean   @default(true)
   branch         Branch?   @relation(fields: [branchId], references: [id])
   branchId       Int?
+  managedBranches BranchManagerAssignment[]
   salary         Float?
   bookings       Booking[]
   orders         Order[]
   assignedOrders Order[]   @relation("AssignedDeliveries")
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+}
+
+model BranchManagerAssignment {
+  userId    Int
+  branchId  Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, branchId])
+  @@index([branchId])
 }
 
 model MenuItem {
@@ -149,6 +162,7 @@ model Order {
   assignedAt           DateTime?
   pickedUpAt           DateTime?
   deliveredAt          DateTime?
+  checkoutRequestId    String?         @unique
   total                Float           @default(0)
   items                OrderItem[]
   createdAt            DateTime        @default(now())

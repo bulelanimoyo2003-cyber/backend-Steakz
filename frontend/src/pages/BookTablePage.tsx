@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import type { AxiosError } from 'axios';
 import api from '../api/axios';
 
 interface Branch {
@@ -30,6 +31,7 @@ export default function BookTablePage() {
     setBranchId(value);
     setTableId('');
     setTables([]);
+    setError('');
 
     if (!value) {
       return;
@@ -38,8 +40,19 @@ export default function BookTablePage() {
     try {
       const response = await api.get<{ tables: Table[] }>(`/public/branches/${value}`);
       setTables(response.data.tables ?? []);
-    } catch {
-      setError('Unable to load tables for the selected location.');
+    } catch (error: unknown) {
+      if ((error as AxiosError)?.response?.status === 404) {
+        setBranchId('');
+        try {
+          const activeBranches = await api.get<Branch[]>('/public/branches');
+          setBranches(activeBranches.data);
+          setError('This location is no longer active. Please select an active location.');
+        } catch {
+          setError('This location is no longer active. Refresh the page and select an active location.');
+        }
+      } else {
+        setError('Unable to load tables for the selected location.');
+      }
     }
   }
 

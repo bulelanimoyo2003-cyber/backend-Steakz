@@ -1,24 +1,29 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import api from '../api/axios';
 
-const LOCATIONS = [
-  'City Centre',
-  'Northside',
-  'Southgate',
-  'East Quarter',
-  'Westfield',
-  'Marina Bay',
-  'Uptown',
-];
+interface Branch {
+  id: number;
+  name: string;
+}
 
 export default function LandingPage() {
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get<Branch[]>('/public/branches')
+      .then((response) => setBranches(response.data))
+      .catch(() => setError('Unable to load active locations.'));
+  }, []);
+
   return (
     <div>
       <div className="hero">
         <div className="ornament">Est. 2024</div>
         <h1>Steakz</h1>
         <p>
-          Seven locations. One obsession. Premium cuts, masterfully prepared — reserve your
-          table and experience the difference.
+          Premium cuts, masterfully prepared — reserve your table and experience the difference.
         </p>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', justifyContent: 'center' }}>
           <Link to="/menu" className="btn btn-primary">
@@ -32,14 +37,15 @@ export default function LandingPage() {
 
       <div className="page" style={{ paddingTop: '1rem' }}>
         <div className="section-title">Our Locations</div>
+        {error && <div className="alert alert-error">⚠ {error}</div>}
         <div className="card-grid">
-          {LOCATIONS.map((loc) => (
-            <div className="card" key={loc} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {branches.map((branch) => (
+            <div className="card" key={branch.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <span style={{ color: 'var(--cognac)', fontSize: '1rem' }}>✦</span>
               <div>
                 <span className="card-label">Steakz</span>
                 <div style={{ fontFamily: 'Playfair Display, serif', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
-                  {loc}
+                  {branch.name.replace('Steakz ', '')}
                 </div>
               </div>
             </div>

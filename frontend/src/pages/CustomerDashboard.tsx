@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
+import { loadCustomerDashboard } from '../../../src/lib/customerDashboard';
 
 interface Booking {
   id: number;
@@ -47,33 +48,35 @@ export default function CustomerDashboard() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [receipts, setReceipts] = useState<ReceiptSummary[]>([]);
+  const [loadErrors, setLoadErrors] = useState({ bookings: false, orders: false, receipts: false });
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
   useEffect(() => {
     let mounted = true;
+    let requestId = 0;
 
     const fetchCustomerData = async () => {
-      try {
-        const [bookingsResp, ordersResp, receiptsResp] = await Promise.all([
-          api.get<Booking[]>('/customer/bookings'),
-          api.get<Order[]>('/customer/orders'),
-          api.get<ReceiptSummary[]>('/customer/receipts'),
-        ]);
+      const currentRequestId = ++requestId;
+      const results = await loadCustomerDashboard({
+        bookings: async () => (await api.get<Booking[]>('/customer/bookings')).data,
+        orders: async () => (await api.get<Order[]>('/customer/orders')).data,
+        receipts: async () => (await api.get<ReceiptSummary[]>('/customer/receipts')).data,
+      });
 
-        if (!mounted) {
-          return;
-        }
-
-        setBookings(bookingsResp.data);
-        setOrders(ordersResp.data);
-        setReceipts(receiptsResp.data);
-      } catch {
-        if (mounted) {
-          setError('Unable to load reservations, orders, or receipts.');
-          setSuccess('');
-        }
+      if (!mounted || currentRequestId !== requestId) {
+        return;
       }
+
+      if (results.bookings.ok) setBookings(results.bookings.value);
+      if (results.orders.ok) setOrders(results.orders.value);
+      if (results.receipts.ok) setReceipts(results.receipts.value);
+      setLoadErrors({
+        bookings: !results.bookings.ok,
+        orders: !results.orders.ok,
+        receipts: !results.receipts.ok,
+      });
     };
 
     fetchCustomerData();
@@ -82,7 +85,7 @@ export default function CustomerDashboard() {
       mounted = false;
       clearInterval(refreshInterval);
     };
-  }, []);
+  }, [loadAttempt, user?.id]);
 
   async function cancelBooking(id: number) {
     try {
@@ -107,7 +110,14 @@ export default function CustomerDashboard() {
       {success && <div className="alert alert-success">✓ {success}</div>}
 
       <div className="section-title">Reservations</div>
-      {bookings.length === 0 ? (
+      {loadErrors.bookings ? (
+        <div className="alert alert-error" role="alert">
+          Unable to load reservations.{' '}
+          <button type="button" className="btn btn-sm" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+            Retry
+          </button>
+        </div>
+      ) : bookings.length === 0 ? (
         <div className="empty-state">
           <span>📅</span>
           No reservations yet.
@@ -148,7 +158,14 @@ export default function CustomerDashboard() {
       )}
 
       <div className="section-title">Order History</div>
-      {orders.length === 0 ? (
+      {loadErrors.orders ? (
+        <div className="alert alert-error" role="alert">
+          Unable to load orders.{' '}
+          <button type="button" className="btn btn-sm" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+            Retry
+          </button>
+        </div>
+      ) : orders.length === 0 ? (
         <div className="empty-state">
           <span>🍷</span>
           No orders yet.
@@ -199,7 +216,14 @@ export default function CustomerDashboard() {
       )}
 
       <div className="section-title">My Receipts</div>
-      {receipts.length === 0 ? (
+      {loadErrors.receipts ? (
+        <div className="alert alert-error" role="alert">
+          Unable to load receipts.{' '}
+          <button type="button" className="btn btn-sm" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+            Retry
+          </button>
+        </div>
+      ) : receipts.length === 0 ? (
         <div className="empty-state">
           <span>🧾</span>
           No receipts available yet.

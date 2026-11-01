@@ -1,5 +1,6 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { AxiosError } from 'axios';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 
@@ -11,6 +12,7 @@ interface Branch {
 
 interface MenuItem {
   id: number;
+  branchId: number;
   name: string;
   description?: string;
   price: number;
@@ -22,8 +24,9 @@ export default function MenuPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [menu, setMenu] = useState<MenuItem[]>([]);
-  const [cart, setCart] = useState<{ item: MenuItem; quantity: number }[]>([]);
+  const [cart, setCart] = useState<{ item: MenuItem; quantity: number; branchId: number }[]>([]);
   const [loading, setLoading] = useState(false);
+  const [checkoutInProgress, setCheckoutInProgress] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [orderType, setOrderType] = useState<'DINE_IN' | 'COLLECTION' | 'DELIVERY'>('DINE_IN');
@@ -31,6 +34,9 @@ export default function MenuPage() {
   const [recipientPhone, setRecipientPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
+  const checkoutInProgressRef = useRef(false);
+  const checkoutRequestRef = useRef<{ fingerprint: string; key: string } | null>(null);
+  const menuRequest = useRef({ id: 0, branchId: 0 });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -45,27 +51,70 @@ export default function MenuPage() {
   }, []);
 
   async function loadMenu(branchId: number) {
+    const cartBranchId = cart[0]?.branchId;
+    const changedBranch = (selectedId !== null && selectedId !== branchId)
+      || (cartBranchId !== undefined && cartBranchId !== branchId);
+    if (checkoutInProgressRef.current) {
+      setNotice({ type: 'info', text: 'Wait for checkout to finish before changing locations.' });
+      return;
+    }
+    if (changedBranch && cart.length > 0) {
+      const currentBranch = branches.find((branch) => branch.id === cart[0].branchId);
+      const nextBranch = branches.find((branch) => branch.id === branchId);
+      const confirmed = window.confirm(
+        `Your cart contains items from ${currentBranch?.name ?? 'another location'}. Clear the cart and switch to ${nextBranch?.name ?? 'this location'}?`,
+      );
+      if (!confirmed) return;
+    }
+
+    const requestId = menuRequest.current.id + 1;
+    menuRequest.current = { id: requestId, branchId };
+    const isCurrentRequest = () => menuRequest.current.id === requestId
+      && menuRequest.current.branchId === branchId;
     setSelectedId(branchId);
+    setMenu([]);
     setLoading(true);
     setError('');
+    if (changedBranch && cart.length > 0) {
+      setCart([]);
+      checkoutRequestRef.current = null;
+      setNotice({ type: 'info', text: 'Cart cleared after you confirmed switching locations.' });
+    }
     try {
       const response = await api.get<MenuItem[]>(`/menu/${branchId}`);
+      if (!isCurrentRequest()) return;
       setMenu(response.data);
-    } catch {
+    } catch (error: unknown) {
+      if (!isCurrentRequest()) return;
       setMenu([]);
-      setError('Unable to load menu for this location.');
+      if ((error as AxiosError)?.response?.status === 404) {
+        try {
+          const response = await api.get<Branch[]>('/public/branches');
+          if (!isCurrentRequest()) return;
+          setBranches(response.data);
+          setError('This location is no longer active. Please select an active location.');
+        } catch {
+          setError('This location may no longer be active. Refresh the page and select an active location.');
+        }
+      } else {
+        setError('Unable to load menu for this location.');
+      }
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) setLoading(false);
     }
   }
 
   function handleAddToCart(menuItem: MenuItem) {
+    if (!selectedId || menuItem.branchId !== selectedId) {
+      setNotice({ type: 'error', text: 'This item belongs to a different location. Select its location before adding it.' });
+      return;
+    }
     setCart((c) => {
       const found = c.find((x) => x.item.id === menuItem.id);
       if (found) {
         return c.map((x) => (x.item.id === menuItem.id ? { ...x, quantity: x.quantity + 1 } : x));
       }
-      return [...c, { item: menuItem, quantity: 1 }];
+      return [...c, { item: menuItem, quantity: 1, branchId: selectedId }];
     });
     setNotice({ type: 'success', text: `${menuItem.name} added to cart.` });
     setTimeout(() => setNotice(null), 2500);
@@ -101,6 +150,30 @@ export default function MenuPage() {
       setNotice({ type: 'error', text: 'Choose a location before checking out.' });
       return;
     }
+    if (cart.some((entry) => entry.branchId !== selectedId || entry.item.branchId !== selectedId)) {
+      setNotice({ type: 'error', text: 'Your cart contains items from another location. Clear it or confirm a location switch before checking out.' });
+      return;
+    }
+
+    let activeBranches: Branch[];
+    try {
+      const response = await api.get<Branch[]>('/public/branches');
+      activeBranches = response.data;
+      setBranches(activeBranches);
+    } catch {
+      setNotice({ type: 'error', text: 'Unable to confirm this location is active. Please try again.' });
+      return;
+    }
+    if (!activeBranches.some((branch) => branch.id === selectedId)) {
+      setSelectedId(null);
+      setMenu([]);
+      checkoutRequestRef.current = null;
+      setNotice({
+        type: 'error',
+        text: 'Your selected location is no longer active. Your cart is preserved; clear it or confirm a switch to an active location.',
+      });
+      return;
+    }
 
     if (orderType === 'DELIVERY'
       && (!recipientName.trim()
@@ -112,6 +185,12 @@ export default function MenuPage() {
       setNotice({ type: 'error', text: 'Enter a recipient name, valid phone number, and delivery address. Instructions may be up to 500 characters.' });
       return;
     }
+
+    if (checkoutInProgressRef.current) {
+      return;
+    }
+    checkoutInProgressRef.current = true;
+    setCheckoutInProgress(true);
 
     try {
       const items = cart.map((c) => ({ menuItemId: c.item.id, quantity: c.quantity }));
@@ -135,9 +214,17 @@ export default function MenuPage() {
         };
       }
 
-      const resp = await api.post('/customer/orders', payload);
+      const fingerprint = JSON.stringify(payload);
+      if (checkoutRequestRef.current?.fingerprint !== fingerprint) {
+        checkoutRequestRef.current = { fingerprint, key: crypto.randomUUID() };
+      }
+
+      const resp = await api.post('/customer/orders', payload, {
+        headers: { 'Idempotency-Key': checkoutRequestRef.current.key },
+      });
       const order = resp.data as any;
       setCart([]);
+      checkoutRequestRef.current = null;
       setNotice({
         type: 'success',
         text: orderType === 'DELIVERY'
@@ -149,6 +236,9 @@ export default function MenuPage() {
       console.error('[Checkout] Error', e);
       const text = e?.response?.data?.error ?? 'Failed to create order.';
       setNotice({ type: 'error', text });
+    } finally {
+      checkoutInProgressRef.current = false;
+      setCheckoutInProgress(false);
     }
   }
 
@@ -158,19 +248,22 @@ export default function MenuPage() {
     <div className="page">
       <div className="page-header">
         <h1>Our Menu</h1>
-        <p>Select a location to view available cuts and dishes</p>
+        <p>Select an active location to view available cuts and dishes</p>
       </div>
 
       <aside style={{ position: 'relative' }}>
         <div className="cart-panel" aria-live="polite">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <strong>Cart</strong>
+            <strong>Cart{cart.length > 0 ? ` · ${branches.find((branch) => branch.id === cart[0].branchId)?.name ?? 'previous location'}` : ''}</strong>
             <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{cart.length} items</span>
           </div>
 
           <div className="form-group">
             <label htmlFor="order-type">Order type</label>
-            <select id="order-type" value={orderType} onChange={(event) => setOrderType(event.target.value as typeof orderType)}>
+            <select id="order-type" value={orderType} onChange={(event) => {
+              checkoutRequestRef.current = null;
+              setOrderType(event.target.value as typeof orderType);
+            }}>
               <option value="DINE_IN">Dine-in (booking required)</option>
               <option value="COLLECTION">Collection</option>
               <option value="DELIVERY">Delivery</option>
@@ -181,19 +274,31 @@ export default function MenuPage() {
             <div className="delivery-details">
               <div className="form-group">
                 <label htmlFor="recipient-name">Recipient name</label>
-                <input id="recipient-name" value={recipientName} maxLength={120} onChange={(event) => setRecipientName(event.target.value)} required />
+                <input id="recipient-name" value={recipientName} maxLength={120} onChange={(event) => {
+                  checkoutRequestRef.current = null;
+                  setRecipientName(event.target.value);
+                }} required />
               </div>
               <div className="form-group">
                 <label htmlFor="recipient-phone">Phone number</label>
-                <input id="recipient-phone" type="tel" value={recipientPhone} maxLength={30} onChange={(event) => setRecipientPhone(event.target.value)} autoComplete="tel" required />
+                <input id="recipient-phone" type="tel" value={recipientPhone} maxLength={30} onChange={(event) => {
+                  checkoutRequestRef.current = null;
+                  setRecipientPhone(event.target.value);
+                }} autoComplete="tel" required />
               </div>
               <div className="form-group">
                 <label htmlFor="delivery-address">Delivery address</label>
-                <textarea id="delivery-address" value={deliveryAddress} maxLength={500} rows={3} onChange={(event) => setDeliveryAddress(event.target.value)} autoComplete="street-address" required />
+                <textarea id="delivery-address" value={deliveryAddress} maxLength={500} rows={3} onChange={(event) => {
+                  checkoutRequestRef.current = null;
+                  setDeliveryAddress(event.target.value);
+                }} autoComplete="street-address" required />
               </div>
               <div className="form-group">
                 <label htmlFor="delivery-instructions">Delivery instructions (optional)</label>
-                <textarea id="delivery-instructions" value={deliveryInstructions} maxLength={500} rows={2} onChange={(event) => setDeliveryInstructions(event.target.value)} />
+                <textarea id="delivery-instructions" value={deliveryInstructions} maxLength={500} rows={2} onChange={(event) => {
+                  checkoutRequestRef.current = null;
+                  setDeliveryInstructions(event.target.value);
+                }} />
               </div>
             </div>
           )}
@@ -223,8 +328,8 @@ export default function MenuPage() {
           </div>
 
           <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-            <button className="btn btn-primary" type="button" onClick={handleCheckout} disabled={cart.length === 0}>
-              Checkout
+            <button className="btn btn-primary" type="button" onClick={handleCheckout} disabled={cart.length === 0 || checkoutInProgress}>
+              {checkoutInProgress ? 'Placing order…' : 'Checkout'}
             </button>
             <button
               className="btn btn-ghost"
@@ -247,6 +352,7 @@ export default function MenuPage() {
             type="button"
             className={`btn ${selectedId === branch.id ? 'btn-primary' : 'btn-ghost'}`}
             onClick={() => loadMenu(branch.id)}
+            disabled={checkoutInProgress}
           >
             {branch.name.replace('Steakz ', '')}
           </button>

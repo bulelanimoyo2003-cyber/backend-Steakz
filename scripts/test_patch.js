@@ -1,35 +1,38 @@
-#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { withIsolatedApi } from './e2e_test_environment.js';
 
-const BASE_URL = 'http://localhost:3001/api';
+await withIsolatedApi(async (baseUrl) => {
+  const api = `${baseUrl}/api`;
+  const loginResponse = await fetch(`${api}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'steakz.city.centre.cashier@steakz.com', password: 'password123' }),
+  });
+  const login = await loginResponse.json();
+  assert.equal(loginResponse.status, 200);
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${login.token}` };
+  const menuResponse = await fetch(`${api}/cashier/menu`, { headers });
+  const menu = await menuResponse.json();
+  assert.equal(menuResponse.status, 200);
+  assert.ok(menu.length > 0);
+  const orderResponse = await fetch(`${api}/cashier/orders`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ items: [{ menuItemId: menu[0].id, quantity: 1 }] }),
+  });
+  const order = await orderResponse.json();
+  assert.equal(orderResponse.status, 201);
 
-async function test() {
-  try {
-    // Use a valid cashier token
-    const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MiwiZW1haWwiOiJzdGVha3ouY2l0eS5jZW50cmUuY2FzaGllckBzdGVha3ouY29tIiwicm9sZSI6IkNBU0hJRVIiLCJicmFuY2hJZCI6MSwiaWF0IjoxNzE4MzI4NDc4fQ.JV2l1EW-VHY1eFVD1-abjlbZEjBJH6bsmA0VhTVeGMc';
-    
-    console.log('Testing PATCH /api/cashier/orders/4/pay');
-    
-    const res = await fetch(`${BASE_URL}/cashier/orders/4/pay`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({})
-    });
-    
-    const text = await res.text();
-    console.log('Status:', res.status);
-    console.log('Response:', text);
-    
-    if (res.ok) {
-      console.log('✓ SUCCESS');
-    } else {
-      console.log('✗ FAILED');
-    }
-  } catch (e) {
-    console.error('Error:', e.message);
-  }
-}
-
-test();
+  const paymentResponse = await fetch(`${api}/cashier/orders/${order.id}/pay`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({}),
+  });
+  const payment = await paymentResponse.json();
+  assert.equal(paymentResponse.status, 200);
+  assert.equal(payment.paymentStatus, 'PAID');
+  console.log(`Payment PATCH verification passed in isolated database for order ${order.id}.`);
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

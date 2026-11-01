@@ -1,5 +1,6 @@
-(async () => {
-  const base = 'http://localhost:3001';
+import { withIsolatedApi } from './e2e_test_environment.js';
+
+async function runCheckoutTest(base) {
   const email = `test+${Date.now()}@example.com`;
   const password = 'Password123!';
   const name = 'E2E Test User';
@@ -25,11 +26,8 @@
     body: JSON.stringify({ email, password }),
   });
   const login = await res.json();
-  console.log('Login status', res.status, login.message ?? login);
-  if (!login.token) {
-    console.error('Login failed, abort');
-    process.exit(1);
-  }
+  console.log('Login status', res.status, login.user?.role ?? login.message ?? 'completed');
+  if (!login.token) throw new Error('Login failed, abort.');
   const token = login.token;
 
   // get branches
@@ -47,7 +45,7 @@
   if (!tableId) throw new Error('No table available');
 
   // create booking
-  const bookingBody = { tableId, guestCount: 2, date: new Date().toISOString() };
+  const bookingBody = { tableId, guestCount: 2, date: new Date(Date.now() + 3600000).toISOString() };
   res = await fetch(`${base}/api/customer/bookings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -80,4 +78,6 @@
   const orders = await res.json();
   console.log('customer orders count', orders.length);
   console.log('E2E completed successfully');
-})().catch((e) => { console.error('E2E failed', e); process.exit(1); });
+}
+
+withIsolatedApi(runCheckoutTest).catch((e) => { console.error('E2E failed', e); process.exitCode = 1; });

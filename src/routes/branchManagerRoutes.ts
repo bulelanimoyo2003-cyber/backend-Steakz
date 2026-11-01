@@ -3,13 +3,24 @@ import type { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
-import { verifyToken, requireRole, requireBranch } from '../middleware/auth.js';
+import { verifyToken, requireRole, requireManagerBranch } from '../middleware/auth.js';
 
 const router = Router();
-router.use(verifyToken, requireRole(['BRANCH_MANAGER']), requireBranch);
+router.use(verifyToken, requireRole(['BRANCH_MANAGER']));
+
+router.get('/branches', async (req: Request, res: Response) => {
+  const assignments = await prisma.branchManagerAssignment.findMany({
+    where: { userId: req.user!.id },
+    include: { branch: { select: { id: true, name: true, address: true, isActive: true } } },
+    orderBy: { branchId: 'asc' },
+  });
+  res.json(assignments.map((assignment) => assignment.branch));
+});
+
+router.use(requireManagerBranch);
 
 router.get('/overview', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const branch = await prisma.branch.findUnique({
     where: { id: branchId },
     include: { _count: { select: { orders: true, users: true, tables: true } } },
@@ -22,13 +33,14 @@ router.get('/overview', async (req: Request, res: Response) => {
 });
 
 router.get('/orders', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const orders = await prisma.order.findMany({
     where: { branchId },
     include: {
       items: { include: { menuItem: true } },
       customer: { select: { name: true } },
       assignedDriver: { select: { id: true, name: true } },
+      branch: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -36,10 +48,16 @@ router.get('/orders', async (req: Request, res: Response) => {
 });
 
 router.get('/staff', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const staff = await prisma.user.findMany({
-    where: { branchId, role: { in: ['CHEF', 'CASHIER', 'BRANCH_MANAGER', 'DELIVERY_DRIVER'] } },
-    select: { id: true, name: true, role: true, salary: true, isActive: true },
+    where: {
+      role: { in: ['CHEF', 'CASHIER', 'BRANCH_MANAGER', 'DELIVERY_DRIVER'] },
+      OR: [
+        { branchId },
+        { managedBranches: { some: { branchId } } },
+      ],
+    },
+    select: { id: true, name: true, role: true, salary: true, isActive: true, branchId: true, branch: { select: { name: true } } },
     orderBy: { id: 'asc' },
   });
   res.json(staff);
@@ -68,7 +86,7 @@ router.post('/staff/drivers', async (req: Request, res: Response) => {
         email: normalizedEmail,
         password: await bcrypt.hash(password, 10),
         role: 'DELIVERY_DRIVER',
-        branchId: req.user!.branchId!,
+        branchId: req.managerBranchId!,
       },
       select: { id: true, name: true, email: true, role: true, branchId: true, isActive: true },
     });
@@ -84,12 +102,12 @@ router.post('/staff/drivers', async (req: Request, res: Response) => {
 });
 
 router.get('/bookings', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const bookings = await prisma.booking.findMany({
     where: { table: { branchId } },
     include: {
       customer: { select: { name: true } },
-      table: { select: { tableNumber: true } },
+      table: { select: { tableNumber: true, branch: { select: { id: true, name: true } } } },
     },
     orderBy: { date: 'asc' },
   });
@@ -97,7 +115,7 @@ router.get('/bookings', async (req: Request, res: Response) => {
 });
 
 router.patch('/bookings/:id/status', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const id = Number(req.params.id);
   const { status } = req.body as { status?: string };
 
@@ -130,16 +148,17 @@ router.patch('/bookings/:id/status', async (req: Request, res: Response) => {
 });
 
 router.get('/tables', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const tables = await prisma.table.findMany({
     where: { branchId },
+    include: { branch: { select: { id: true, name: true } } },
     orderBy: { tableNumber: 'asc' },
   });
   res.json(tables);
 });
 
 router.patch('/tables/:id/status', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const id = Number(req.params.id);
   const { status } = req.body as { status?: string };
 
@@ -159,7 +178,7 @@ router.patch('/tables/:id/status', async (req: Request, res: Response) => {
 });
 
 router.get('/sales', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const result = await prisma.order.aggregate({
     where: { branchId, status: { in: ['DONE', 'DELIVERED'] } },
     _sum: { total: true },
@@ -169,13 +188,13 @@ router.get('/sales', async (req: Request, res: Response) => {
 });
 
 router.get('/menu', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const items = await prisma.menuItem.findMany({ where: { branchId }, orderBy: { category: 'asc' } });
   res.json(items);
 });
 
 router.post('/menu', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const { name, description, price, category } = req.body as {
     name?: string;
     description?: string;
@@ -201,19 +220,54 @@ router.post('/menu', async (req: Request, res: Response) => {
 });
 
 router.patch('/menu/:id', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const id = Number(req.params.id);
-  const item = await prisma.menuItem.findUnique({ where: { id } });
-  if (!item || item.branchId !== branchId) {
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid menu item id.' });
+    return;
+  }
+  const { name, description, price, category, isAvailable } = req.body as {
+    name?: unknown;
+    description?: unknown;
+    price?: unknown;
+    category?: unknown;
+    isAvailable?: unknown;
+  };
+  const data = {
+    ...(typeof name === 'string' ? { name: name.trim() } : {}),
+    ...(typeof description === 'string' || description === null ? { description } : {}),
+    ...(typeof price === 'number' && Number.isFinite(price) && price >= 0 ? { price } : {}),
+    ...(typeof category === 'string' ? { category: category.trim() } : {}),
+    ...(typeof isAvailable === 'boolean' ? { isAvailable } : {}),
+  };
+  if (Object.keys(data).length === 0) {
+    res.status(400).json({ error: 'Provide valid menu fields to update.' });
+    return;
+  }
+  if ((name !== undefined && (typeof name !== 'string' || !name.trim()))
+    || (description !== undefined && description !== null && typeof description !== 'string')
+    || (price !== undefined && (typeof price !== 'number' || !Number.isFinite(price) || price < 0))
+    || (category !== undefined && (typeof category !== 'string' || !category.trim()))
+    || (isAvailable !== undefined && typeof isAvailable !== 'boolean')) {
+    res.status(400).json({ error: 'One or more menu fields are invalid.' });
+    return;
+  }
+
+  const updatedCount = await prisma.menuItem.updateMany({ where: { id, branchId }, data });
+  if (updatedCount.count !== 1) {
     res.status(403).json({ error: 'Menu item not found in your branch.' });
     return;
   }
-  const updated = await prisma.menuItem.update({ where: { id }, data: req.body });
+  const updated = await prisma.menuItem.findFirst({ where: { id, branchId } });
+  if (!updated) {
+    res.status(404).json({ error: 'Menu item not found.' });
+    return;
+  }
   res.json(updated);
 });
 
 router.delete('/menu/:id', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const id = Number(req.params.id);
   const item = await prisma.menuItem.findUnique({ where: { id } });
   if (!item || item.branchId !== branchId) {
@@ -225,7 +279,7 @@ router.delete('/menu/:id', async (req: Request, res: Response) => {
 });
 
 router.patch('/staff/:id/salary', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const id = Number(req.params.id);
   const { salary } = req.body as { salary?: number };
 
@@ -234,8 +288,11 @@ router.patch('/staff/:id/salary', async (req: Request, res: Response) => {
     return;
   }
 
-  const user = await prisma.user.findUnique({ where: { id } });
-  if (!user || user.branchId !== branchId) {
+  const user = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true, branchId: true } });
+  const managerAssignment = user?.role === 'BRANCH_MANAGER'
+    ? await prisma.branchManagerAssignment.findUnique({ where: { userId_branchId: { userId: id, branchId } } })
+    : null;
+  if (!user || (user.branchId !== branchId && !managerAssignment)) {
     res.status(403).json({ error: 'Staff member not found in your branch.' });
     return;
   }
@@ -245,7 +302,7 @@ router.patch('/staff/:id/salary', async (req: Request, res: Response) => {
 });
 
 router.patch('/staff/:id/status', async (req: Request, res: Response) => {
-  const branchId = req.user!.branchId!;
+  const branchId = req.managerBranchId!;
   const id = Number(req.params.id);
   const { isActive } = req.body as { isActive?: boolean };
 
@@ -254,8 +311,11 @@ router.patch('/staff/:id/status', async (req: Request, res: Response) => {
     return;
   }
 
-  const user = await prisma.user.findUnique({ where: { id } });
-  if (!user || user.branchId !== branchId) {
+  const user = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true, branchId: true } });
+  const managerAssignment = user?.role === 'BRANCH_MANAGER'
+    ? await prisma.branchManagerAssignment.findUnique({ where: { userId_branchId: { userId: id, branchId } } })
+    : null;
+  if (!user || (user.branchId !== branchId && !managerAssignment)) {
     res.status(403).json({ error: 'Staff member not found in your branch.' });
     return;
   }
