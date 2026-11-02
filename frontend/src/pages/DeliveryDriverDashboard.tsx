@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 interface DeliveryOrder {
   id: number;
   status: string;
+  paymentStatus: 'UNPAID' | 'PAID';
   deliveryStatus: string | null;
   recipientName: string | null;
   recipientPhone: string | null;
@@ -85,6 +86,8 @@ export default function DeliveryDriverDashboard() {
 
   function renderOrder(order: DeliveryOrder, history = false) {
     const isDelivered = order.deliveryStatus === 'DELIVERED' || order.status === 'DELIVERED';
+    const kitchenReady = order.status === 'DONE' || isDelivered;
+    const paymentConfirmed = order.paymentStatus === 'PAID';
     return (
       <article className="driver-delivery-card" key={order.id}>
         <div className="driver-delivery-heading">
@@ -94,12 +97,14 @@ export default function DeliveryDriverDashboard() {
           </div>
           <div className="driver-statuses">
             <span className={`badge badge-${(isDelivered ? 'done' : order.status).toLowerCase()}`}>
-              Kitchen: {isDelivered ? 'DONE' : order.status}
+              Kitchen: {kitchenReady ? 'Ready for collection' : 'Waiting for kitchen'}
+            </span>
+            <span className={`badge ${paymentConfirmed ? 'badge-success' : 'badge-warning'}`}>
+              {paymentConfirmed ? 'Paid' : 'Awaiting payment confirmation from cashier'}
             </span>
             <span className={`badge badge-${(order.deliveryStatus ?? 'unassigned').toLowerCase()}`}>
               {isDelivered ? 'Delivered'
-                : order.deliveryStatus === 'ASSIGNED'
-                ? (order.status === 'DONE' || order.status === 'DELIVERED' ? 'Ready for pickup' : 'Waiting for kitchen')
+                : order.deliveryStatus === 'ASSIGNED' ? 'Assigned'
                 : order.deliveryStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery'
                   : 'Waiting for driver assignment'}
             </span>
@@ -125,11 +130,20 @@ export default function DeliveryDriverDashboard() {
               <button
                 className="btn btn-primary"
                 type="button"
-                disabled={order.status !== 'DONE' || busyOrderId !== null}
+                disabled={!kitchenReady || !paymentConfirmed || busyOrderId !== null}
                 onClick={() => void updateDelivery(order.id, 'pickup')}
               >
-                Collect order / Start delivery
+                {busyOrderId === order.id ? 'Collecting…' : 'Collect / Start delivery'}
               </button>
+            )}
+            {order.deliveryStatus === 'ASSIGNED' && (!kitchenReady || !paymentConfirmed) && (
+              <span className="driver-waiting">
+                {!kitchenReady && !paymentConfirmed
+                  ? 'Waiting for kitchen preparation and cashier payment confirmation.'
+                  : !kitchenReady
+                    ? 'Waiting for kitchen preparation before collection.'
+                    : 'Awaiting payment confirmation from cashier before collection.'}
+              </span>
             )}
             {order.deliveryStatus === 'OUT_FOR_DELIVERY' && (
               <button
@@ -138,7 +152,7 @@ export default function DeliveryDriverDashboard() {
                 disabled={busyOrderId !== null}
                 onClick={() => void updateDelivery(order.id, 'delivered')}
               >
-                Mark delivered
+                {busyOrderId === order.id ? 'Updating…' : 'Mark delivered'}
               </button>
             )}
             {order.deliveryStatus === 'ASSIGNED' && order.status !== 'DONE' && (

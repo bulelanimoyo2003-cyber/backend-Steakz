@@ -124,13 +124,22 @@ async function seedTestFixtures(prisma, bcrypt) {
 
   const branchFixtures = [];
   for (const branch of branches) {
-    const [chef, driver, menuItem] = await Promise.all([
+    const [chef, cashier, driver, menuItem] = await Promise.all([
       prisma.user.create({
         data: {
           name: `${branch.name} Chef`,
           email: `chef-${branch.id}@isolated.test`,
           password,
           role: 'CHEF',
+          branchId: branch.id,
+        },
+      }),
+      prisma.user.create({
+        data: {
+          name: `${branch.name} Cashier`,
+          email: `cashier-${branch.id}@isolated.test`,
+          password,
+          role: 'CASHIER',
           branchId: branch.id,
         },
       }),
@@ -152,7 +161,7 @@ async function seedTestFixtures(prisma, bcrypt) {
         },
       }),
     ]);
-    branchFixtures.push({ branch, chef, driver, menuItem });
+    branchFixtures.push({ branch, chef, cashier, driver, menuItem });
   }
   await Promise.all(branchFixtures.map(({ branch, driver }) => prisma.branch.update({
     where: { id: branch.id },
@@ -258,7 +267,7 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
   });
 
   const orders = [];
-  for (const { branch, chef, driver, menuItem } of fixtures.branchFixtures) {
+  for (const { branch, chef, cashier, driver, menuItem } of fixtures.branchFixtures) {
     const checkoutKey = crypto.randomUUID();
     const body = {
       branchId: branch.id,
@@ -288,7 +297,7 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
     });
     assert.equal(retry.status, 200, 'same checkout request is idempotent');
     assert.equal(retry.data.id, placed.data.id);
-    orders.push({ branch, chef, driver, orderId: placed.data.id });
+    orders.push({ branch, chef, cashier, driver, orderId: placed.data.id });
   }
   assert.equal(await fixtures.prisma.order.count(), beforeUnavailableCheckout + 4);
 
@@ -299,8 +308,9 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
   assert.ok(customerOrdersAfterRestart.data.every((order) => order.deliveryStatus === 'ASSIGNED'));
 
   let crossBranchDriverDenials = 0;
-  let waitingForKitchenChecks = 0;
-  for (const { branch, chef, driver, orderId } of orders) {
+  let assignedBeforeKitchenReady = 0;
+  const pickupGateCombinations = [];
+  for (const [index, { branch, chef, cashier, driver, orderId }] of orders.entries()) {
     const login = await api('/auth/login', {
       method: 'POST',
       body: { email: driver.email, password: 'Isolated-Test-1234!' },
@@ -318,13 +328,46 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
     assert.deepEqual(ownOrders.data.map((order) => order.id), [orderId]);
     assert.equal(ownOrders.data[0].deliveryStatus, 'ASSIGNED');
     assert.equal(ownOrders.data[0].status, 'PENDING');
-    const prematurePickup = await api(`/driver/orders/${orderId}/pickup`, {
-      method: 'PATCH',
-      token: driverToken,
-    });
-    assert.equal(prematurePickup.status, 409, 'an assigned, not-ready delivery remains visible and cannot be collected yet');
-    waitingForKitchenChecks += 1;
+    assert.equal(ownOrders.data[0].paymentStatus, 'UNPAID');
+    assignedBeforeKitchenReady += 1;
 
+    const kitchenPrepared = index === 1 || index === 3;
+    const paymentConfirmed = index === 2 || index === 3;
+    pickupGateCombinations.push(`${kitchenPrepared ? 'prepared' : 'unprepared'}+${paymentConfirmed ? 'paid' : 'unpaid'}`);
+    if (kitchenPrepared) {
+      assert.equal((await api(`/chef/orders/${orderId}/preparing`, {
+        method: 'PATCH', token: tokenFor(chef),
+      })).status, 200);
+      assert.equal((await api(`/chef/orders/${orderId}/done`, {
+        method: 'PATCH', token: tokenFor(chef),
+      })).status, 200);
+    }
+    if (paymentConfirmed) {
+      const paid = await api(`/cashier/orders/${orderId}/pay`, {
+        method: 'PATCH', token: tokenFor(cashier),
+      });
+      assert.equal(paid.status, 200, `${branch.name} cashier payment confirmation`);
+      assert.equal(paid.data.paymentStatus, 'PAID');
+    }
+
+    const pickupAttempt = await api(`/driver/orders/${orderId}/pickup`, {
+      method: 'PATCH', token: driverToken,
+    });
+    if (kitchenPrepared && paymentConfirmed) {
+      assert.equal(pickupAttempt.status, 200, 'prepared and paid delivery can be collected');
+      assert.equal(pickupAttempt.data.deliveryStatus, 'OUT_FOR_DELIVERY');
+    } else {
+      assert.equal(pickupAttempt.status, 409, 'pickup is blocked unless both kitchen and payment are complete');
+      assert.match(pickupAttempt.data.error, kitchenPrepared
+        ? /cashier confirms payment/
+        : paymentConfirmed
+          ? /kitchen finishes preparing/
+          : /kitchen finishes preparing.*cashier confirms payment/);
+      const unchangedOrder = await api('/driver/orders', { token: driverToken });
+      const unchanged = unchangedOrder.data.find((order) => order.id === orderId);
+      assert.equal(unchanged.status, kitchenPrepared ? 'DONE' : 'PENDING');
+      assert.equal(unchanged.paymentStatus, paymentConfirmed ? 'PAID' : 'UNPAID');
+    }
     const otherOrder = orders.find((target) => target.branch.id !== branch.id);
     const crossBranchRead = await api('/driver/orders', { token: driverToken });
     assert.ok(crossBranchRead.data.every((order) => order.branch.name === branch.name));
@@ -340,7 +383,7 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
       branchId: branch.id,
     });
     assert.ok(managerOrdersBeforeReady.data.some((order) => order.id === orderId
-      && order.deliveryStatus === 'ASSIGNED'
+      && order.deliveryStatus === (pickupAttempt.status === 200 ? 'OUT_FOR_DELIVERY' : 'ASSIGNED')
       && order.assignedDriverId === driver.id));
     const managerCrossBranchRequest = await api('/branch-manager/orders', {
       token: restrictedManagerToken,
@@ -349,25 +392,34 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
     if (branch.id !== fixtures.branches[0].id) assert.equal(managerCrossBranchRequest.status, 403);
 
     const chefToken = tokenFor(chef);
-    assert.equal((await api(`/chef/orders/${orderId}/preparing`, {
-      method: 'PATCH', token: chefToken,
-    })).status, 200);
-    assert.equal((await api(`/chef/orders/${orderId}/done`, {
-      method: 'PATCH', token: chefToken,
-    })).status, 200);
+    if (!kitchenPrepared) {
+      assert.equal((await api(`/chef/orders/${orderId}/preparing`, {
+        method: 'PATCH', token: chefToken,
+      })).status, 200);
+      assert.equal((await api(`/chef/orders/${orderId}/done`, {
+        method: 'PATCH', token: chefToken,
+      })).status, 200);
+    }
+    if (!paymentConfirmed) {
+      const paid = await api(`/cashier/orders/${orderId}/pay`, {
+        method: 'PATCH', token: tokenFor(cashier),
+      });
+      assert.equal(paid.status, 200);
+      assert.equal(paid.data.paymentStatus, 'PAID');
+    }
 
     const customerAssignedOrders = await api('/customer/orders', { token: customerToken });
     const customerAssignedOrder = customerAssignedOrders.data.find((order) => order.id === orderId);
     assert.equal(customerAssignedOrder.status, 'DONE');
-    assert.equal(customerAssignedOrder.deliveryStatus, 'ASSIGNED');
+    assert.equal(customerAssignedOrder.deliveryStatus, pickupAttempt.status === 200 ? 'OUT_FOR_DELIVERY' : 'ASSIGNED');
     assert.equal(customerAssignedOrder.assignedDriver.id, driver.id);
 
-    const pickedUp = await api(`/driver/orders/${orderId}/pickup`, {
-      method: 'PATCH',
-      token: driverToken,
-    });
+    const pickedUp = pickupAttempt.status === 200
+      ? pickupAttempt
+      : await api(`/driver/orders/${orderId}/pickup`, { method: 'PATCH', token: driverToken });
     assert.equal(pickedUp.status, 200);
     assert.ok(pickedUp.data.pickedUpAt);
+    assert.equal(pickedUp.data.paymentStatus, 'PAID');
     const managerOutForDelivery = await api('/branch-manager/orders', {
       token: managerToken,
       branchId: branch.id,
@@ -395,7 +447,7 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
     const customerDelivered = customerDeliveredOrders.data.find((order) => order.id === orderId);
     assert.equal(customerDelivered.deliveryStatus, 'DELIVERED');
     assert.equal(customerDelivered.status, 'DONE');
-    assert.equal(customerDelivered.paymentStatus, 'UNPAID');
+    assert.equal(customerDelivered.paymentStatus, 'PAID', 'delivery actions preserve the cashier-confirmed payment state');
     assert.equal((await api(`/driver/orders/${orderId}/delivered`, {
       method: 'PATCH', token: driverToken,
     })).status, 200, 'delivery retry is idempotent');
@@ -408,17 +460,19 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
   }
 
   assert.equal(crossBranchDriverDenials, 4);
-  assert.equal(waitingForKitchenChecks, 4);
+  assert.equal(assignedBeforeKitchenReady, 4);
+  assert.deepEqual(pickupGateCombinations, [
+    'unprepared+unpaid',
+    'prepared+unpaid',
+    'unprepared+paid',
+    'prepared+paid',
+  ]);
   const otherCustomerOrders = await api('/customer/orders', { token: otherCustomerToken });
   assert.equal(otherCustomerOrders.data.length, 0);
   assert.equal((await api(`/customer/receipt/${orders[0].orderId}`, {
     token: otherCustomerToken,
   })).status, 404, 'customers cannot read another customer receipt');
 
-  await fixtures.prisma.order.update({
-    where: { id: orders[0].orderId },
-    data: { paymentStatus: 'PAID' },
-  });
   const receipt = await api(`/customer/receipt/${orders[0].orderId}`, { token: customerToken });
   assert.equal(receipt.status, 200);
   assert.equal(receipt.data.deliveryStatus, 'DELIVERED');
@@ -435,7 +489,7 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
     assert.ok(order.pickedUpAt);
     assert.ok(order.deliveredAt);
   }
-  assert.equal(customerOrders.data.filter((order) => order.paymentStatus === 'UNPAID').length, 3);
+  assert.ok(customerOrders.data.every((order) => order.paymentStatus === 'PAID'));
   return {
     activeBranches: expectedBranches,
     automaticAssignments: orders.length,
@@ -443,11 +497,12 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
     restartPersistence: true,
     idempotentCheckoutRetries: orders.length,
     unavailableBranchRejected: true,
-    assignedBeforeKitchenReady: waitingForKitchenChecks,
+    assignedBeforeKitchenReady,
+    pickupGateCombinations,
     crossBranchDriverDenials,
     crossBranchStaffDenial: true,
     customerIsolation: true,
-    unpaidOrdersRemainUnpaidAfterDelivery: 3,
+    paymentRemainsSeparateFromDelivery: true,
     receiptShowsDeliveryCompletion: true,
   };
 }

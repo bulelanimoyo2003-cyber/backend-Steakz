@@ -62,6 +62,8 @@ async function completeDelivery(baseUrl, branch, order, tokens) {
   await expectStatus(baseUrl, 'PATCH', `/driver/orders/${order.id}/pickup`, tokens.driver, 409);
   await expectStatus(baseUrl, 'PATCH', `/chef/orders/${order.id}/preparing`, tokens.chef, 200);
   await expectStatus(baseUrl, 'PATCH', `/chef/orders/${order.id}/done`, tokens.chef, 200);
+  const paid = await expectStatus(baseUrl, 'PATCH', `/cashier/orders/${order.id}/pay`, tokens.cashier, 200);
+  assert.equal(paid.paymentStatus, 'PAID');
   const pickup = await expectStatus(baseUrl, 'PATCH', `/driver/orders/${order.id}/pickup`, tokens.driver, 200);
   assert.equal(pickup.deliveryStatus, 'OUT_FOR_DELIVERY');
   const delivered = await expectStatus(baseUrl, 'PATCH', `/driver/orders/${order.id}/delivered`, tokens.driver, 200);
@@ -71,7 +73,7 @@ async function completeDelivery(baseUrl, branch, order, tokens) {
   const customerOrder = customerOrders.find((candidate) => candidate.id === order.id);
   assert.equal(customerOrder?.branchId, branch.id);
   assert.equal(customerOrder?.deliveryStatus, 'DELIVERED');
-  assert.equal(customerOrder?.paymentStatus, 'UNPAID');
+  assert.equal(customerOrder?.paymentStatus, 'PAID');
 }
 
 await withIsolatedApi(async (baseUrl, databasePath) => {
@@ -105,6 +107,7 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
       customer,
       manager: await login(baseUrl, `${prefix}.manager@steakz.com`, 'password123', 'BRANCH_MANAGER'),
       chef: await login(baseUrl, `${prefix}.chef@steakz.com`, 'password123', 'CHEF'),
+      cashier: await login(baseUrl, `${prefix}.cashier@steakz.com`, 'password123', 'CASHIER'),
     };
     staffByBranch.set(branch.id, tokens);
 

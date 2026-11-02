@@ -1,6 +1,7 @@
 export interface DeliveryOrderState {
   branchId: number;
   status: string;
+  paymentStatus: string;
   orderType: string;
   deliveryStatus: string | null;
   assignedDriverId: number | null;
@@ -42,7 +43,10 @@ export function canAssignDelivery(order: DeliveryOrderState): boolean {
 }
 
 export function canPickUpDelivery(order: DeliveryOrderState): boolean {
-  return order.orderType === 'DELIVERY' && order.status === 'DONE' && order.deliveryStatus === 'ASSIGNED';
+  return order.orderType === 'DELIVERY'
+    && order.status === 'DONE'
+    && order.paymentStatus === 'PAID'
+    && order.deliveryStatus === 'ASSIGNED';
 }
 
 export function canCompleteDelivery(order: DeliveryOrderState): boolean {

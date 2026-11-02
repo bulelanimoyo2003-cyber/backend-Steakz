@@ -27,6 +27,7 @@ const driverOrderSelect = {
   id: true,
   status: true,
   orderType: true,
+  paymentStatus: true,
   deliveryStatus: true,
   assignedDriverId: true,
   recipientName: true,
@@ -85,12 +86,20 @@ router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Assigned delivery not found.' });
     return;
   }
-  if (visibleOrder.status === 'DONE' && visibleOrder.deliveryStatus === 'OUT_FOR_DELIVERY') {
+  if (visibleOrder.status === 'DONE'
+    && (visibleOrder.deliveryStatus === 'OUT_FOR_DELIVERY' || visibleOrder.deliveryStatus === 'DELIVERED')) {
     res.json(await prisma.order.findUnique({ where: { id }, select: driverOrderSelect }));
     return;
   }
   if (!canPickUpDelivery(visibleOrder)) {
-    res.status(409).json({ error: 'Only assigned deliveries marked DONE by the kitchen can be picked up.' });
+    const pending = [];
+    if (visibleOrder.status !== 'DONE') pending.push('the kitchen finishes preparing the order');
+    if (visibleOrder.paymentStatus !== 'PAID') pending.push('the cashier confirms payment');
+    res.status(409).json({
+      error: pending.length
+        ? `Delivery cannot be collected until ${pending.join(' and ')}.`
+        : 'Delivery status changed; reload before trying again.',
+    });
     return;
   }
 
@@ -101,6 +110,7 @@ router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
       branchId: req.user!.branchId!,
       orderType: 'DELIVERY',
       status: 'DONE',
+      paymentStatus: 'PAID',
       deliveryStatus: 'ASSIGNED',
     },
     data: { deliveryStatus: 'OUT_FOR_DELIVERY', pickedUpAt: new Date() },
@@ -113,7 +123,14 @@ router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
       res.json(await prisma.order.findUnique({ where: { id }, select: driverOrderSelect }));
       return;
     }
-    res.status(409).json({ error: 'Delivery status changed; reload before trying again.' });
+    const pending = [];
+    if (currentOrder?.status !== 'DONE') pending.push('the kitchen finishes preparing the order');
+    if (currentOrder?.paymentStatus !== 'PAID') pending.push('the cashier confirms payment');
+    res.status(409).json({
+      error: pending.length
+        ? `Delivery cannot be collected until ${pending.join(' and ')}.`
+        : 'Delivery status changed; reload before trying again.',
+    });
     return;
   }
 

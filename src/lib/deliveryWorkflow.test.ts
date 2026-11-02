@@ -15,6 +15,7 @@ import {
 const order: DeliveryOrderState = {
   branchId: 4,
   status: 'DONE',
+  paymentStatus: 'PAID',
   orderType: 'DELIVERY',
   deliveryStatus: 'ASSIGNED',
   assignedDriverId: 12,
@@ -50,5 +51,6 @@ test('delivery transitions require kitchen completion and valid delivery progres
   assert.equal(canAssignDelivery({ ...order, status: 'CANCELLED' }), false);
   assert.equal(canAssignDelivery({ ...order, deliveryStatus: 'DELIVERED' }), false);
   assert.equal(canPickUpDelivery({ ...order, status: 'PREPARING' }), false);
+  assert.equal(canPickUpDelivery({ ...order, paymentStatus: 'UNPAID' }), false);
   assert.equal(canCompleteDelivery({ ...order, status: 'CANCELLED' }), false);
 });

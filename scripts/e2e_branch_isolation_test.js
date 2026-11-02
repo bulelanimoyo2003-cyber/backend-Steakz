@@ -260,6 +260,7 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
     }
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${delivery.order.id}/preparing`, delivery.fixture.chefToken, 200);
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${delivery.order.id}/done`, delivery.fixture.chefToken, 200);
+    await expectStatus(baseUrl, 'PATCH', `/cashier/orders/${delivery.order.id}/pay`, delivery.fixture.cashierToken, 200);
     await expectStatus(baseUrl, 'PATCH', `/driver/orders/${delivery.order.id}/pickup`, delivery.driverToken, 200);
     await expectStatus(baseUrl, 'PATCH', `/driver/orders/${delivery.order.id}/delivered`, delivery.driverToken, 200);
   }

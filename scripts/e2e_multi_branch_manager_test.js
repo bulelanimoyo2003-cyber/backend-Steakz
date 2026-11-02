@@ -133,6 +133,7 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
 
     const chefPrefix = branch.name.toLowerCase().replace(/\s+/g, '.');
     const chefToken = (await login(baseUrl, `${chefPrefix}.chef@steakz.com`, 'password123', 'CHEF')).token;
+    const cashierToken = (await login(baseUrl, `${chefPrefix}.cashier@steakz.com`, 'password123', 'CASHIER')).token;
     const order = await expectStatus(baseUrl, 'POST', '/customer/orders', customerToken, 201, {
       orderType: 'DELIVERY',
       branchId: configBranchId,
@@ -148,13 +149,15 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
     await expectStatus(baseUrl, 'PATCH', `/driver/orders/${order.id}/pickup`, driverToken, 409);
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${order.id}/preparing`, chefToken, 200);
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${order.id}/done`, chefToken, 200);
+    const payment = await expectStatus(baseUrl, 'PATCH', `/cashier/orders/${order.id}/pay`, cashierToken, 200);
+    assert.equal(payment.paymentStatus, 'PAID');
     await expectStatus(baseUrl, 'PATCH', `/driver/orders/${order.id}/pickup`, driverToken, 200);
     const delivered = await expectStatus(baseUrl, 'PATCH', `/driver/orders/${order.id}/delivered`, driverToken, 200);
     assert.equal(delivered.deliveryStatus, 'DELIVERED');
     const customerOrders = await expectStatus(baseUrl, 'GET', '/customer/orders', customerToken, 200);
     const customerOrder = customerOrders.find((candidate) => candidate.id === order.id);
     assert.equal(customerOrder?.deliveryStatus, 'DELIVERED');
-    assert.equal(customerOrder?.paymentStatus, 'UNPAID');
+    assert.equal(customerOrder?.paymentStatus, 'PAID');
 
     const booking = await expectStatus(baseUrl, 'POST', '/customer/bookings', customerToken, 201, {
       tableId: tables[0].id,

@@ -87,7 +87,7 @@ await withIsolatedApi(async (baseUrl) => {
   const extraDriverToken = await login(baseUrl, extraDriver.email, 'Password123!', 'DELIVERY_DRIVER');
 
   const orders = [];
-  for (const { branch, managerToken, chefToken, driverToken, driver, menuItem } of branchData) {
+  for (const { branch, managerToken, chefToken, cashierToken, driverToken, driver, menuItem } of branchData) {
     const createResult = await request(baseUrl, 'POST', '/customer/orders', {
       orderType: 'DELIVERY',
       branchId: branch.id,
@@ -120,7 +120,7 @@ await withIsolatedApi(async (baseUrl) => {
     assert.equal(assignedProgress.find((candidate) => candidate.id === order.id)?.deliveryStatus, 'ASSIGNED');
 
     await expectStatus(baseUrl, 'PATCH', `/driver/orders/${order.id}/pickup`, driverToken, 409);
-    orders.push({ order, branch, managerToken, chefToken, driverToken, driver });
+    orders.push({ order, branch, managerToken, chefToken, cashierToken, driverToken, driver });
   }
 
   if (branchData.length > 1) {
@@ -136,7 +136,7 @@ await withIsolatedApi(async (baseUrl) => {
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${second.order.id}/preparing`, first.chefToken, 403);
   }
 
-  for (const { order, branch, managerToken, chefToken, driverToken, driver } of orders) {
+  for (const { order, branch, managerToken, chefToken, cashierToken, driverToken, driver } of orders) {
     const ownBranchOrders = await expectStatus(baseUrl, 'GET', '/branch-manager/orders', managerToken, 200, undefined, branch.id);
     assert.ok(ownBranchOrders.some((candidate) => candidate.id === order.id));
     assert.ok(ownBranchOrders.every((candidate) => candidate.branchId === branch.id));
@@ -156,6 +156,8 @@ await withIsolatedApi(async (baseUrl) => {
 
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${order.id}/preparing`, chefToken, 200);
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${order.id}/done`, chefToken, 200);
+    const payment = await expectStatus(baseUrl, 'PATCH', `/cashier/orders/${order.id}/pay`, cashierToken, 200);
+    assert.equal(payment.paymentStatus, 'PAID');
     const readyProgress = await expectStatus(baseUrl, 'GET', '/customer/orders', customerToken, 200);
     const readyOrder = readyProgress.find((candidate) => candidate.id === order.id);
     assert.equal(readyOrder?.status, 'DONE');
@@ -171,7 +173,7 @@ await withIsolatedApi(async (baseUrl) => {
 
   const customerOrders = await expectStatus(baseUrl, 'GET', '/customer/orders', customerToken, 200);
   assert.deepEqual(new Set(customerOrders.map((order) => order.id)), new Set(orders.map(({ order }) => order.id)));
-  assert.ok(customerOrders.every((order) => order.deliveryStatus === 'DELIVERED' && order.paymentStatus === 'UNPAID'));
+  assert.ok(customerOrders.every((order) => order.deliveryStatus === 'DELIVERED' && order.paymentStatus === 'PAID'));
   const otherCustomerOrders = await expectStatus(baseUrl, 'GET', '/customer/orders', otherCustomerToken, 200);
   assert.deepEqual(otherCustomerOrders, []);
   await expectStatus(baseUrl, 'GET', `/customer/receipt/${orders[0].order.id}`, otherCustomerToken, 404);
