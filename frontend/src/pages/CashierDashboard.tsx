@@ -202,7 +202,12 @@ export default function CashierDashboard() {
 
         <div>
           <h2 style={{ marginBottom: '1.25rem' }}>Recent Orders</h2>
-          {orders.slice(0, 10).map((order) => (
+          {orders.length === 0 ? (
+            <div className="empty-state">
+              <span>🧾</span>
+              No recent orders yet.
+            </div>
+          ) : orders.slice(0, 10).map((order) => (
             <div className="card" key={order.id} style={{ marginBottom: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="card-label">Order #{order.id}</span>
