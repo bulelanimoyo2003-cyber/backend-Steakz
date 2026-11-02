@@ -5,7 +5,7 @@ export default defineConfig({
     db: {
       url:
         process.env.DATABASE_URL ??
-        'postgresql://postgres:postgres@localhost:5432/steakz',
+        'postgresql://postgres:password@localhost:5432/steakz_db',
     },
   },
 });
