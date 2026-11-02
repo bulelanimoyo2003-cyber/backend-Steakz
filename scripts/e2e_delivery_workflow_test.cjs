@@ -351,6 +351,16 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
       assert.equal(paid.data.paymentStatus, 'PAID');
     }
 
+    if (index === 3) {
+      api = await restartApi();
+      const afterRestart = await api('/driver/orders', { token: driverToken });
+      assert.equal(afterRestart.status, 200);
+      const persistedOrder = afterRestart.data.find((order) => order.id === orderId);
+      assert.equal(persistedOrder.status, 'DONE');
+      assert.equal(persistedOrder.paymentStatus, 'PAID');
+      assert.equal(persistedOrder.deliveryStatus, 'ASSIGNED');
+    }
+
     const pickupAttempt = await api(`/driver/orders/${orderId}/pickup`, {
       method: 'PATCH', token: driverToken,
     });
