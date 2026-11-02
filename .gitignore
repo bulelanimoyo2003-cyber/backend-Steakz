@@ -41,3 +41,6 @@ logs/
 *.backup
 *.backup.*
 *.dump
+
+# Generated Prisma Client
+backend/src/generated/
