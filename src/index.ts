@@ -20,7 +20,40 @@ import deliveryDriverRoutes from './routes/deliveryDriverRoutes.js';
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 
-app.use(cors({ origin: process.env.FRONTEND_URL ?? 'http://localhost:5173' }));
+function normalizeOrigin(origin: string | undefined) {
+  return origin?.replace(/\/$/, '')?.trim();
+}
+
+const allowedOrigins = [
+  ...(process.env.NODE_ENV === 'production'
+    ? []
+    : [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'http://localhost:5174',
+      'http://127.0.0.1:5174',
+    ]),
+  'https://steak-frontend-dx21.onrender.com',
+  normalizeOrigin(process.env.FRONTEND_URL),
+].filter(Boolean) as string[];
+
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    const incoming = normalizeOrigin(origin);
+    if (!incoming) return callback(null, true);
+    if (allowedOrigins.includes(incoming)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Branch-Id', 'Idempotency-Key'],
+};
+
+if (!process.env.FRONTEND_URL) {
+  console.warn('[Backend] FRONTEND_URL is not set. CORS will allow localhost origins.');
+}
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(logger);
 
