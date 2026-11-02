@@ -10,7 +10,7 @@ router.use(verifyToken, requireRole(['BRANCH_MANAGER']));
 
 router.get('/branches', async (req: Request, res: Response) => {
   const assignments = await prisma.branchManagerAssignment.findMany({
-    where: { userId: req.user!.id },
+    where: { userId: req.user!.id, branch: { isActive: true } },
     include: { branch: { select: { id: true, name: true, address: true, isActive: true } } },
     orderBy: { branchId: 'asc' },
   });

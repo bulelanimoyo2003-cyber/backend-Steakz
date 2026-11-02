@@ -32,7 +32,9 @@ router.post('/branches', async (req: Request, res: Response) => {
   }
 
   try {
-    const branch = await prisma.branch.create({ data: { name: name.trim(), address: address.trim(), phone: phone?.trim() } });
+    const branch = await prisma.branch.create({
+      data: { name: name.trim(), address: address.trim(), phone: phone?.trim(), isActive: false },
+    });
     res.status(201).json(branch);
   } catch {
     res.status(409).json({ error: 'Branch name already exists.' });
@@ -78,6 +80,16 @@ router.post('/users', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'branchId is required for staff roles.' });
     return;
   }
+  if (BRANCH_ROLES.includes(normalizedRole) && branchId) {
+    const activeBranch = await prisma.branch.findFirst({
+      where: { id: branchId, isActive: true },
+      select: { id: true },
+    });
+    if (!activeBranch) {
+      res.status(400).json({ error: 'Staff accounts must be assigned to an active location.' });
+      return;
+    }
+  }
 
   const hashed = await bcrypt.hash(password, 10);
   try {
@@ -115,7 +127,7 @@ router.get('/users', async (_req: Request, res: Response) => {
       isActive: true,
       branchId: true,
       salary: true,
-      branch: { select: { name: true } },
+      branch: { select: { name: true, isActive: true } },
     },
     orderBy: { id: 'asc' },
   });
@@ -139,6 +151,16 @@ router.patch('/users/:id/role', async (req: Request, res: Response) => {
   if (BRANCH_ROLES.includes(normalizedRole) && (!Number.isInteger(branchId) || !branchId || branchId <= 0)) {
     res.status(400).json({ error: 'branchId is required for staff roles.' });
     return;
+  }
+  if (BRANCH_ROLES.includes(normalizedRole) && branchId) {
+    const activeBranch = await prisma.branch.findFirst({
+      where: { id: branchId, isActive: true },
+      select: { id: true },
+    });
+    if (!activeBranch) {
+      res.status(400).json({ error: 'Staff accounts must be assigned to an active location.' });
+      return;
+    }
   }
 
   try {

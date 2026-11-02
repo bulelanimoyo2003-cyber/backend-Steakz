@@ -9,7 +9,7 @@ interface User {
   isActive: boolean;
   branchId?: number;
   salary?: number;
-  branch?: { name: string };
+  branch?: { name: string; isActive: boolean };
 }
 
 interface Branch {
@@ -82,7 +82,7 @@ export default function AdminDashboard() {
 
     try {
       await api.post('/admin/branches', { name: bName, address: bAddress });
-      setBMsg('Location added.');
+      setBMsg('Location added as inactive. Only the four configured locations are available to customers.');
       setBName('');
       setBAddress('');
       loadAll();
@@ -111,6 +111,9 @@ export default function AdminDashboard() {
     await api.delete(`/admin/users/${id}`);
     loadAll();
   }
+
+  const activeBranches = branches.filter((branch) => branch.isActive);
+  const inactiveBranches = branches.filter((branch) => !branch.isActive);
 
   return (
     <div className="page">
@@ -145,7 +148,7 @@ export default function AdminDashboard() {
               <label>Location (staff only)</label>
               <select value={uBranch} onChange={(event) => setUBranch(event.target.value)}>
                 <option value="">— None —</option>
-                {branches.map((branch) => (<option key={branch.id} value={branch.id}>{branch.name}</option>))}
+                {activeBranches.map((branch) => (<option key={branch.id} value={branch.id}>{branch.name}</option>))}
               </select>
             </div>
             <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>Create User</button>
@@ -163,13 +166,24 @@ export default function AdminDashboard() {
             <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>Add Location</button>
           </form>
 
-          <div className="section-title" style={{ marginTop: '1.5rem' }}>All Locations</div>
-          {branches.map((branch) => (
+          <div className="section-title" style={{ marginTop: '1.5rem' }}>All Active Locations</div>
+          {activeBranches.map((branch) => (
             <div key={branch.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <span style={{ color: 'var(--cognac)', fontSize: '0.7rem' }}>✦</span>
               <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>{branch.name}</span>
             </div>
           ))}
+          {inactiveBranches.length > 0 && (
+            <>
+              <div className="section-title" style={{ marginTop: '1.5rem' }}>Inactive Locations</div>
+              {inactiveBranches.map((branch) => (
+                <div key={branch.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>{branch.name}</span>
+                  <span className="badge badge-cancelled">Inactive</span>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
 
@@ -192,7 +206,11 @@ export default function AdminDashboard() {
                   {ROLES.map((role) => (<option key={role} value={role}>{role}</option>))}
                 </select>
               </td>
-              <td style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>{user.branch?.name ?? '—'}</td>
+              <td style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+                {user.branch
+                  ? `${user.branch.name}${user.branch.isActive ? '' : ' (Inactive location)'}`
+                  : '—'}
+              </td>
               <td>
                 <span className={`badge badge-${user.isActive ? 'confirmed' : 'cancelled'}`}>
                   {user.isActive ? 'Active' : 'Disabled'}

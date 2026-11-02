@@ -81,6 +81,15 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
   const initialActiveBranches = await expectStatus(baseUrl, 'GET', '/public/branches', undefined, 200);
   assert.deepEqual(initialActiveBranches.map((branch) => branch.name), activeBranchNames);
   assert.deepEqual(initialActiveBranches.map((branch) => branch.id), activeBranchIds);
+  const admin = await login(baseUrl, 'admin@steakz.com', 'admin123', 'ADMIN');
+  const sharedManager = await login(
+    baseUrl,
+    'steakz.city.centre.manager@steakz.com',
+    'password123',
+    'BRANCH_MANAGER',
+  );
+  const managerBranches = await expectStatus(baseUrl, 'GET', '/branch-manager/branches', sharedManager, 200);
+  assert.deepEqual(managerBranches.map((branch) => branch.name), activeBranchNames);
   const customer = await login(baseUrl, 'customer@steakz.com', 'password123', 'CUSTOMER');
   const staffByBranch = new Map();
   const inactiveSetups = [];
@@ -221,6 +230,19 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
     const delivery = await prepareDelivery(baseUrl, branch, tokens, menu[0], nonce);
     await completeDelivery(baseUrl, branch, delivery.order, { ...tokens, driver: delivery.driverToken });
   }
+
+  const addedLocation = await expectStatus(baseUrl, 'POST', '/admin/branches', admin, 201, {
+    name: `Inactive Test Location ${nonce}`,
+    address: 'Isolated test address',
+  });
+  assert.equal(addedLocation.isActive, false, 'New admin-created locations must not expand the active customer list.');
+  assert.deepEqual(
+    (await expectStatus(baseUrl, 'GET', '/public/branches', undefined, 200)).map((branch) => branch.name),
+    activeBranchNames,
+  );
+  const adminBranches = await expectStatus(baseUrl, 'GET', '/admin/branches', admin, 200);
+  assert.equal(adminBranches.filter((branch) => branch.isActive).length, 4);
+  assert.ok(adminBranches.some((branch) => branch.id === addedLocation.id && !branch.isActive));
 
   console.log(`Branch availability E2E passed: ${activeBranchNames.length} active branches, ${inactiveSetups.length} inactive branches; reservation, ordering, delivery completion, inactive-branch rejection, and existing-delivery management verified.`);
 });
