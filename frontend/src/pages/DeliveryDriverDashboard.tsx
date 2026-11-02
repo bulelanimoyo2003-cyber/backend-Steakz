@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 
@@ -34,21 +34,32 @@ export default function DeliveryDriverDashboard() {
   const [success, setSuccess] = useState('');
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const refreshInFlight = useRef(false);
 
   const loadOrders = useCallback(async () => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
-      const [profileResponse, ordersResponse] = await Promise.all([
+      const [profileResult, ordersResult] = await Promise.allSettled([
         api.get<DriverProfile>('/driver/profile'),
-        api.get<DeliveryOrder[]>('/driver/orders'),
+        api.get<DeliveryOrder[]>('/driver/orders', { headers: { 'Cache-Control': 'no-cache' } }),
       ]);
-      setProfile(profileResponse.data);
-      setOrders(ordersResponse.data);
-      setLoadError('');
+      const refreshErrors: string[] = [];
+      if (profileResult.status === 'fulfilled') {
+        setProfile(profileResult.value.data);
+      } else {
+        refreshErrors.push('Unable to refresh your driver profile.');
+      }
+      if (ordersResult.status === 'fulfilled') {
+        setOrders(ordersResult.value.data);
+      } else {
+        refreshErrors.push('Unable to refresh your assigned deliveries.');
+      }
+      setLoadError(refreshErrors.join(' '));
       setError('');
-    } catch {
-      setLoadError('Unable to load your driver profile and assigned deliveries.');
     } finally {
       setLoading(false);
+      refreshInFlight.current = false;
     }
   }, []);
 
@@ -154,9 +165,6 @@ export default function DeliveryDriverDashboard() {
               >
                 {busyOrderId === order.id ? 'Updating…' : 'Mark delivered'}
               </button>
-            )}
-            {order.deliveryStatus === 'ASSIGNED' && order.status !== 'DONE' && (
-              <span className="driver-waiting">Waiting for kitchen — collection is available when preparation is DONE.</span>
             )}
           </div>
         )}

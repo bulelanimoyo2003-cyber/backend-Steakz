@@ -199,7 +199,7 @@ function createApi(baseUrl) {
     } catch {
       data = null;
     }
-    return { status: response.status, data };
+    return { status: response.status, data, cacheControl: response.headers.get('cache-control') };
   };
 }
 
@@ -325,6 +325,7 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
 
     const ownOrders = await api('/driver/orders', { token: driverToken });
     assert.equal(ownOrders.status, 200);
+    assert.equal(ownOrders.cacheControl, 'no-store');
     assert.deepEqual(ownOrders.data.map((order) => order.id), [orderId]);
     assert.equal(ownOrders.data[0].deliveryStatus, 'ASSIGNED');
     assert.equal(ownOrders.data[0].status, 'PENDING');

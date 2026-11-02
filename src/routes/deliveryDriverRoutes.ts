@@ -69,7 +69,7 @@ router.get('/orders', async (req: Request, res: Response) => {
     select: driverOrderSelect,
     orderBy: [{ deliveryStatus: 'asc' }, { assignedAt: 'desc' }],
   });
-  res.json(orders);
+  res.set('Cache-Control', 'no-store').json(orders);
 });
 
 router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
