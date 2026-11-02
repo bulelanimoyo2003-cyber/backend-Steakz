@@ -92,11 +92,12 @@ export default function BranchManagerDashboard() {
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const dashboardRequest = useRef({ id: 0, key: '' });
+  const [branchesLoadedForUserId, setBranchesLoadedForUserId] = useState<number | null>(null);
 
   const loadDashboardData = useCallback(async (assignedBranches: Branch[], selection: string) => {
     const requestKey = selection === 'all'
-      ? `branches:${assignedBranches.map((branch) => branch.id).sort((a, b) => a - b).join(',')}`
-      : `branch:${selection}`;
+      ? `user:${user?.id}:branches:${assignedBranches.map((branch) => branch.id).sort((a, b) => a - b).join(',')}`
+      : `user:${user?.id}:branch:${selection}`;
     const selectionChanged = dashboardRequest.current.key !== requestKey;
     const requestId = dashboardRequest.current.id + 1;
     dashboardRequest.current = { id: requestId, key: requestKey };
@@ -172,14 +173,31 @@ export default function BranchManagerDashboard() {
     } finally {
       if (isCurrentRequest()) setLoading(false);
     }
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     let mounted = true;
+    dashboardRequest.current = { id: dashboardRequest.current.id + 1, key: '' };
+    setBranches([]);
+    setBranchesLoadedForUserId(null);
+    setSelectedBranchId('all');
+    setSales({ totalSales: 0, orderCount: 0 });
+    setStaff([]);
+    setOrders([]);
+    setBookings([]);
+    setTables([]);
+    setMenuItems([]);
+    setError('');
+    setSuccess('');
     api.get<Branch[]>('/branch-manager/branches')
       .then((response) => {
         if (!mounted) return;
         setBranches(response.data);
+        setBranchesLoadedForUserId(user?.id ?? null);
+        if (response.data.length === 0) {
+          setLoading(false);
+          setError('No active assigned location is available.');
+        }
       })
       .catch(() => {
         if (mounted) {
@@ -188,25 +206,30 @@ export default function BranchManagerDashboard() {
         }
       });
     return () => { mounted = false; };
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
-    if (branches.length === 0) return;
+    if (branches.length === 0 || branchesLoadedForUserId !== user?.id) return;
     void loadDashboardData(branches, selectedBranchId);
-  }, [branches, loadDashboardData, selectedBranchId]);
+  }, [branches, branchesLoadedForUserId, loadDashboardData, selectedBranchId, user?.id]);
 
   useEffect(() => {
-    if (branches.length === 0) return undefined;
+    if (branches.length === 0 || branchesLoadedForUserId !== user?.id) return undefined;
     const refreshData = () => {
       void loadDashboardData(branches, selectedBranchId);
     };
-    const refresh = setInterval(refreshData, 10000);
+    const refreshVisibleTab = () => {
+      if (document.visibilityState === 'visible') refreshData();
+    };
+    const refresh = setInterval(refreshVisibleTab, 10000);
     window.addEventListener('focus', refreshData);
+    document.addEventListener('visibilitychange', refreshVisibleTab);
     return () => {
       clearInterval(refresh);
       window.removeEventListener('focus', refreshData);
+      document.removeEventListener('visibilitychange', refreshVisibleTab);
     };
-  }, [branches, loadDashboardData, selectedBranchId]);
+  }, [branches, branchesLoadedForUserId, loadDashboardData, selectedBranchId, user?.id]);
 
   const selectedBranch = selectedBranchId === 'all'
     ? null

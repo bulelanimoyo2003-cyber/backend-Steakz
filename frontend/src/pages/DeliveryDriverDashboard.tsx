@@ -34,16 +34,16 @@ export default function DeliveryDriverDashboard() {
   const [success, setSuccess] = useState('');
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const refreshInFlight = useRef(false);
+  const requestId = useRef(0);
 
   const loadOrders = useCallback(async () => {
-    if (refreshInFlight.current) return;
-    refreshInFlight.current = true;
+    const currentRequestId = ++requestId.current;
     try {
       const [profileResult, ordersResult] = await Promise.allSettled([
         api.get<DriverProfile>('/driver/profile'),
         api.get<DeliveryOrder[]>('/driver/orders', { headers: { 'Cache-Control': 'no-cache' } }),
       ]);
+      if (currentRequestId !== requestId.current) return;
       const refreshErrors: string[] = [];
       if (profileResult.status === 'fulfilled') {
         setProfile(profileResult.value.data);
@@ -58,20 +58,32 @@ export default function DeliveryDriverDashboard() {
       setLoadError(refreshErrors.join(' '));
       setError('');
     } finally {
-      setLoading(false);
-      refreshInFlight.current = false;
+      if (currentRequestId === requestId.current) setLoading(false);
     }
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
+    requestId.current += 1;
+    setProfile(null);
+    setOrders([]);
+    setError('');
+    setLoadError('');
+    setSuccess('');
+    setLoading(true);
     void loadOrders();
-    const interval = setInterval(() => void loadOrders(), 10000);
+    const refreshVisibleTab = () => {
+      if (document.visibilityState === 'visible') void loadOrders();
+    };
+    const interval = setInterval(refreshVisibleTab, 10000);
     window.addEventListener('focus', loadOrders);
+    document.addEventListener('visibilitychange', refreshVisibleTab);
     return () => {
+      requestId.current += 1;
       clearInterval(interval);
       window.removeEventListener('focus', loadOrders);
+      document.removeEventListener('visibilitychange', refreshVisibleTab);
     };
-  }, [loadOrders]);
+  }, [loadOrders, user?.id]);
 
   async function updateDelivery(orderId: number, action: 'pickup' | 'delivered') {
     if (busyOrderId !== null) return;
@@ -99,6 +111,10 @@ export default function DeliveryDriverDashboard() {
     const isDelivered = order.deliveryStatus === 'DELIVERED' || order.status === 'DELIVERED';
     const kitchenReady = order.status === 'DONE' || isDelivered;
     const paymentConfirmed = order.paymentStatus === 'PAID';
+    const canCollect = order.status === 'DONE'
+      && paymentConfirmed
+      && order.deliveryStatus === 'ASSIGNED';
+    const isCancelled = order.status === 'CANCELLED';
     return (
       <article className="driver-delivery-card" key={order.id}>
         <div className="driver-delivery-heading">
@@ -141,7 +157,7 @@ export default function DeliveryDriverDashboard() {
               <button
                 className="btn btn-primary"
                 type="button"
-                disabled={!kitchenReady || !paymentConfirmed || busyOrderId !== null}
+                disabled={!canCollect || busyOrderId !== null}
                 onClick={() => void updateDelivery(order.id, 'pickup')}
               >
                 {busyOrderId === order.id ? 'Collecting…' : 'Collect / Start delivery'}
@@ -156,7 +172,7 @@ export default function DeliveryDriverDashboard() {
                     : 'Awaiting payment confirmation from cashier before collection.'}
               </span>
             )}
-            {order.deliveryStatus === 'OUT_FOR_DELIVERY' && (
+            {order.deliveryStatus === 'OUT_FOR_DELIVERY' && !isCancelled && (
               <button
                 className="btn btn-primary"
                 type="button"

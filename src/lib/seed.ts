@@ -52,8 +52,6 @@ const TEST_USERS: Array<{ name: string; email: string; role: SeedRole; branchId:
   { name: 'Sample Customer', email: 'customer@steakz.com', role: 'CUSTOMER', branchId: null, salary: null },
 ];
 
-const BRANCH_STAFF_ROLES = ['BRANCH_MANAGER', 'CHEF', 'CASHIER'] as const;
-
 async function ensureBranchData() {
   for (const branch of BRANCHES) {
     const isActive = ACTIVE_BRANCH_NAMES.includes(branch.name);
@@ -64,6 +62,8 @@ async function ensureBranchData() {
     } else if (branchRecord.isActive !== isActive) {
       branchRecord = await prisma.branch.update({ where: { id: branchRecord.id }, data: { isActive } });
     }
+
+    if (!isActive) continue;
 
     const existingTables = await prisma.table.findMany({ where: { branchId: branchRecord.id } });
     if (existingTables.length === 0) {
@@ -87,12 +87,10 @@ async function ensureBranchData() {
       console.log(`[Seeder] ${createdCount} missing menu items added for ${branch.name}`);
     }
 
-    const branchManagerEmail = `${branchRecord.name.toLowerCase().replace(/\s+/g, '.')}.manager@steakz.com`;
     const chefEmail = `${branchRecord.name.toLowerCase().replace(/\s+/g, '.')}.chef@steakz.com`;
     const cashierEmail = `${branchRecord.name.toLowerCase().replace(/\s+/g, '.')}.cashier@steakz.com`;
 
     const staff = [
-      { name: `${branchRecord.name} Manager`, email: branchManagerEmail, role: 'BRANCH_MANAGER' as SeedRole, salary: 65000 },
       { name: `${branchRecord.name} Chef`, email: chefEmail, role: 'CHEF' as SeedRole, salary: 42000 },
       { name: `${branchRecord.name} Cashier`, email: cashierEmail, role: 'CASHIER' as SeedRole, salary: 38000 },
     ];
@@ -108,36 +106,54 @@ async function ensureBranchData() {
             role: member.role,
             branchId: branchRecord.id,
             salary: member.salary,
-            ...(member.role === 'BRANCH_MANAGER'
-              ? { managedBranches: { create: { branchId: branchRecord.id } } }
-              : {}),
           },
         });
         console.log(`[Seeder] User created: ${member.email}`);
-      } else if (member.role === 'BRANCH_MANAGER' && existing.role === 'BRANCH_MANAGER') {
-        await prisma.branchManagerAssignment.upsert({
-          where: { userId_branchId: { userId: existing.id, branchId: branchRecord.id } },
-          update: {},
-          create: { userId: existing.id, branchId: branchRecord.id },
-        });
       }
     }
   }
 
   await prisma.branch.updateMany({
-    where: { name: { notIn: ACTIVE_BRANCH_NAMES } },
+    where: { name: { notIn: ACTIVE_BRANCH_NAMES }, isActive: true },
     data: { isActive: false },
   });
 
-  const sharedManager = await prisma.user.findUnique({ where: { email: SHARED_BRANCH_MANAGER_EMAIL } });
-  if (!sharedManager || sharedManager.role !== 'BRANCH_MANAGER') {
-    throw new Error(`The configured multi-branch manager ${SHARED_BRANCH_MANAGER_EMAIL} is missing or has the wrong role.`);
+  const activeBranches = await prisma.branch.findMany({
+    where: { name: { in: ACTIVE_BRANCH_NAMES }, isActive: true },
+    select: { id: true, name: true },
+  });
+  if (activeBranches.length !== ACTIVE_BRANCH_NAMES.length) {
+    throw new Error('One or more configured active locations are missing or inactive.');
   }
-  for (const name of ACTIVE_BRANCH_NAMES) {
-    const branch = await prisma.branch.findUnique({ where: { name } });
-    if (!branch) {
-      throw new Error(`The configured active branch ${name} is missing.`);
-    }
+  const cityCentre = activeBranches.find((branch) => branch.name === ACTIVE_BRANCH_NAMES[0]);
+  if (!cityCentre) {
+    throw new Error('The active City Centre location is missing.');
+  }
+
+  let sharedManager = await prisma.user.findUnique({ where: { email: SHARED_BRANCH_MANAGER_EMAIL } });
+  if (!sharedManager) {
+    sharedManager = await prisma.user.create({
+      data: {
+        name: 'Steakz City Centre Manager',
+        email: SHARED_BRANCH_MANAGER_EMAIL,
+        password: await bcrypt.hash('password123', 10),
+        role: 'BRANCH_MANAGER',
+        branchId: cityCentre.id,
+        salary: 65000,
+      },
+    });
+  }
+  if (sharedManager.role !== 'BRANCH_MANAGER' || !sharedManager.isActive) {
+    throw new Error(`The configured multi-branch manager ${SHARED_BRANCH_MANAGER_EMAIL} must be an active BRANCH_MANAGER.`);
+  }
+
+  await prisma.branchManagerAssignment.deleteMany({
+    where: {
+      branchId: { in: activeBranches.map((branch) => branch.id) },
+      userId: { not: sharedManager.id },
+    },
+  });
+  for (const branch of activeBranches) {
     await prisma.branchManagerAssignment.upsert({
       where: { userId_branchId: { userId: sharedManager.id, branchId: branch.id } },
       update: {},

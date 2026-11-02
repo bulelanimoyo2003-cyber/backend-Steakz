@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../api/axios';
 import KpiCard from '../components/KpiCard';
+import { useAuth } from '../context/AuthContext';
 
 interface OrderItem {
   menuItem: { name: string };
@@ -23,25 +24,49 @@ interface MenuItem {
 }
 
 export default function ChefDashboard() {
+  const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [error, setError] = useState('');
+  const requestGeneration = useRef(0);
 
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
+    const generation = requestGeneration.current;
     try {
       const response = await api.get<Order[]>('/chef/orders');
-      setOrders(response.data);
+      if (generation === requestGeneration.current) setOrders(response.data);
     } catch {
-      setError('Unable to load orders.');
+      if (generation === requestGeneration.current) setError('Unable to load orders.');
     }
-  }
+  }, [user?.id]);
 
   useEffect(() => {
-    loadOrders();
+    requestGeneration.current += 1;
+    const generation = requestGeneration.current;
+    setOrders([]);
+    setMenu([]);
+    setError('');
+    void loadOrders();
     api.get<MenuItem[]>('/chef/menu')
-      .then((response) => setMenu(response.data))
-      .catch(() => setError('Unable to load menu items.'));
-  }, []);
+      .then((response) => {
+        if (generation === requestGeneration.current) setMenu(response.data);
+      })
+      .catch(() => {
+        if (generation === requestGeneration.current) setError('Unable to load menu items.');
+      });
+    const refreshVisibleTab = () => {
+      if (document.visibilityState === 'visible') void loadOrders();
+    };
+    const interval = setInterval(refreshVisibleTab, 10000);
+    window.addEventListener('focus', loadOrders);
+    document.addEventListener('visibilitychange', refreshVisibleTab);
+    return () => {
+      requestGeneration.current += 1;
+      clearInterval(interval);
+      window.removeEventListener('focus', loadOrders);
+      document.removeEventListener('visibilitychange', refreshVisibleTab);
+    };
+  }, [loadOrders, user?.id]);
 
   async function markDone(id: number) {
     try {

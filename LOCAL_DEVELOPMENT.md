@@ -1,6 +1,6 @@
 # Local Steakz development
 
-The local presentation frontend uses the root SQLite API in `src/`, not the separate PostgreSQL API in `backend/`. The Vite proxy sends `/api` requests to `http://localhost:3001`. Keep the presentation database local; do not point either app at production data while testing.
+The local presentation frontend uses the root SQLite API in `src/`, not the separate PostgreSQL API in `backend/`. The nested PostgreSQL project is separately configured and must not be used for presentation work. The Vite proxy sends `/api` requests to `http://127.0.0.1:3001`; do not point the local presentation app at a remote database.
 
 ## Start the local presentation app on Windows
 
@@ -11,6 +11,8 @@ Backend terminal:
 ```powershell
 cd "C:\Users\DELL\Downloads\Steakz"
 $env:DATABASE_URL = "file:$($env:LOCALAPPDATA -replace '\\','/')/Steakz/delivery-preview/steakz-preview-20261101-133115.db"
+$env:NODE_ENV = "development"
+$env:PORT = "3001"
 npm.cmd run dev
 ```
 
@@ -23,7 +25,7 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5174 --strictPort
 
 Open <http://127.0.0.1:5174>. The API health check is <http://localhost:3001/api/health>. The frontend's Vite proxy targets port 3001.
 
-If the presentation database filename differs on another machine, set `DATABASE_URL` to that machine's local SQLite presentation file instead. Do not use the remote PostgreSQL URL configured for the separate `backend/` project.
+If the presentation database filename differs on another machine, set `DATABASE_URL` to that machine's local SQLite presentation file instead. Do not use the remote PostgreSQL URL configured for the separate `backend/` project. The current running nested backend can connect to a managed PostgreSQL host; do not start it for the local presentation.
 
 ## Presentation account setup
 
@@ -45,6 +47,6 @@ The account password update requires `STEAKZ_PRESENTATION_PASSWORD_UPDATE=true`,
 
 ## Environment variables
 
-The root SQLite API reads `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `PORT`, and `FRONTEND_URL`. The frontend uses `VITE_API_URL` for production builds; during Vite development it uses the relative `/api` path and the proxy in `frontend/vite.config.ts`.
+The root SQLite API reads `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `PORT`, `FRONTEND_URL`, and optional comma-separated `CORS_ALLOWED_ORIGINS`. The frontend uses `VITE_API_URL` for production builds; during Vite development it uses the relative `/api` path and the proxy in `frontend/vite.config.ts`, so the value in `frontend/.env` does not override the local API proxy.
 
 The nested `backend/` project has its own PostgreSQL Prisma schema and `.env`. It is not the local SQLite presentation API; only start it when deliberately configuring a local PostgreSQL database.

@@ -17,7 +17,7 @@ declare global {
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret';
 
-export function verifyToken(req: Request, res: Response, next: NextFunction): void {
+export async function verifyToken(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'No token provided.' });
@@ -30,17 +30,30 @@ export function verifyToken(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
+  let decoded: string | jwt.JwtPayload;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as {
-      id: number;
-      role: string;
-      branchId: number | null;
-    };
-    req.user = decoded;
-    next();
+    decoded = jwt.verify(token, JWT_SECRET);
   } catch {
     res.status(401).json({ error: 'Invalid or expired token.' });
+    return;
   }
+
+  if (typeof decoded === 'string' || !Number.isSafeInteger(decoded.id) || Number(decoded.id) <= 0) {
+    res.status(401).json({ error: 'Invalid or expired token.' });
+    return;
+  }
+
+  const account = await prisma.user.findUnique({
+    where: { id: Number(decoded.id) },
+    select: { id: true, role: true, branchId: true, isActive: true },
+  });
+  if (!account || !account.isActive) {
+    res.status(401).json({ error: 'Account is inactive or no longer exists.' });
+    return;
+  }
+
+  req.user = { id: account.id, role: account.role, branchId: account.branchId };
+  next();
 }
 
 export function requireRole(roles: string[]) {
