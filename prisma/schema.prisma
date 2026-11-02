@@ -63,6 +63,8 @@ model Branch {
   phone     String?
   isActive  Boolean    @default(true)
   users     User[]
+  designatedDeliveryDriverId Int? @unique
+  designatedDeliveryDriver User? @relation("BranchDesignatedDeliveryDriver", fields: [designatedDeliveryDriverId], references: [id], onDelete: SetNull)
   managerAssignments BranchManagerAssignment[]
   tables    Table[]
   menuItems MenuItem[]
@@ -81,6 +83,7 @@ model User {
   branch         Branch?   @relation(fields: [branchId], references: [id])
   branchId       Int?
   managedBranches BranchManagerAssignment[]
+  designatedForDeliveryBranch Branch? @relation("BranchDesignatedDeliveryDriver")
   salary         Float?
   bookings       Booking[]
   orders         Order[]

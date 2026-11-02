@@ -241,9 +241,8 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
       deliveryAddress: `${fixture.branch.name} delivery address`,
       items: [{ menuItemId: fixture.menuItem.id, quantity: 1 }],
     });
-    await expectStatus(baseUrl, 'PATCH', `/delivery-management/orders/${deliveryOrder.id}/driver`, managerToken, 200, {
-      driverId: driver.id,
-    }, fixture.branch.id);
+    assert.equal(deliveryOrder.deliveryStatus, 'ASSIGNED');
+    assert.equal(deliveryOrder.assignedDriverId, driver.id);
     deliveries.push({
       fixture,
       driver,
@@ -258,15 +257,15 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
     assert.deepEqual(driverOrders.map((order) => order.id), [delivery.order.id]);
     for (const other of deliveries.filter((_, otherIndex) => otherIndex !== index)) {
       await expectStatus(baseUrl, 'PATCH', `/driver/orders/${other.order.id}/pickup`, delivery.driverToken, 404);
-      await expectStatus(baseUrl, 'PATCH', `/delivery-management/orders/${delivery.order.id}/driver`, managerToken, 403, {
-        driverId: other.driver.id,
-      }, other.fixture.branch.id);
     }
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${delivery.order.id}/preparing`, delivery.fixture.chefToken, 200);
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${delivery.order.id}/done`, delivery.fixture.chefToken, 200);
     await expectStatus(baseUrl, 'PATCH', `/driver/orders/${delivery.order.id}/pickup`, delivery.driverToken, 200);
     await expectStatus(baseUrl, 'PATCH', `/driver/orders/${delivery.order.id}/delivered`, delivery.driverToken, 200);
   }
+  await expectStatus(baseUrl, 'PATCH', `/delivery-management/orders/${deliveries[0].order.id}/driver`, managerToken, 409, {
+    driverId: deliveries[1].driver.id,
+  }, deliveries[0].fixture.branch.id);
 
   const combined = [];
   for (const fixture of fixtures) {

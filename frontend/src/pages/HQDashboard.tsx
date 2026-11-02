@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../api/axios';
 
 interface BranchSales {
@@ -27,41 +27,37 @@ interface Order {
   branch: { id: number; name: string };
 }
 
-interface Driver {
-  id: number;
-  name: string;
-}
-
 export default function HQDashboard() {
   const [sales, setSales] = useState<BranchSales[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [driversByBranch, setDriversByBranch] = useState<Record<number, Driver[]>>({});
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    api.get<BranchSales[]>('/hq/sales').then((response) => setSales(response.data)).catch(() => setError('Unable to load sales data.'));
-    api.get<StaffMember[]>('/hq/staff').then((response) => setStaff(response.data)).catch(() => setError('Unable to load staff data.'));
-    api.get<Order[]>('/hq/orders').then(async (response) => {
-      setOrders(response.data);
-      const branchIds = [...new Set(response.data.filter((order) => order.orderType === 'DELIVERY').map((order) => order.branch.id))];
-      const driverLists = await Promise.all(branchIds.map(async (branchId) => {
-        const drivers = await api.get<Driver[]>('/delivery-management/drivers', { params: { branchId } });
-        return [branchId, drivers.data] as const;
-      }));
-      setDriversByBranch(Object.fromEntries(driverLists));
-    }).catch(() => setError('Unable to load order overview or eligible drivers.'));
-  }, []);
-
-  async function assignDriver(orderId: number, driverId: number) {
+  const loadOverview = useCallback(async () => {
     try {
-      const response = await api.patch<Order>(`/delivery-management/orders/${orderId}/driver`, { driverId });
-      setOrders((previous) => previous.map((order) => order.id === orderId ? { ...order, ...response.data } : order));
+      const [salesResponse, staffResponse, ordersResponse] = await Promise.all([
+        api.get<BranchSales[]>('/hq/sales'),
+        api.get<StaffMember[]>('/hq/staff'),
+        api.get<Order[]>('/hq/orders'),
+      ]);
+      setSales(salesResponse.data);
+      setStaff(staffResponse.data);
+      setOrders(ordersResponse.data);
       setError('');
     } catch {
-      setError('Unable to assign this driver. Refresh and check the order status.');
+      setError('Unable to load the HQ overview.');
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    void loadOverview();
+    const interval = setInterval(() => void loadOverview(), 10000);
+    window.addEventListener('focus', loadOverview);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', loadOverview);
+    };
+  }, [loadOverview]);
 
   const totalRevenue = sales.reduce((sum, branch) => sum + branch.totalSales, 0);
   const totalOrders = sales.reduce((sum, branch) => sum + branch.orderCount, 0);
@@ -126,26 +122,22 @@ export default function HQDashboard() {
               <tr key={order.id}>
                 <td>#{order.id}</td>
                 <td>{order.branch.name}</td>
-                <td><span className={`badge badge-${order.status.toLowerCase()}`}>{order.status}</span></td>
+                <td>
+                  {order.orderType === 'DELIVERY' ? (
+                    <span className={`badge badge-${(order.status === 'DELIVERED' ? 'done' : order.status).toLowerCase()}`}>
+                      Kitchen: {order.status === 'DELIVERED' ? 'DONE' : order.status}
+                    </span>
+                  ) : <span className={`badge badge-${order.status.toLowerCase()}`}>{order.status}</span>}
+                </td>
                 <td>
                   {order.orderType === 'DELIVERY' ? (
                     <div className="delivery-assignment">
-                      <span>{order.deliveryStatus?.replaceAll('_', ' ') ?? 'UNASSIGNED'}</span>
-                      <select
-                        aria-label={`Assign driver to order ${order.id}`}
-                        value={order.assignedDriver?.id ?? ''}
-                        disabled={order.status === 'CANCELLED' || order.status === 'DELIVERED'
-                          || order.deliveryStatus === 'OUT_FOR_DELIVERY' || order.deliveryStatus === 'DELIVERED'}
-                        onChange={(event) => {
-                          if (event.target.value) void assignDriver(order.id, Number(event.target.value));
-                        }}
-                      >
-                        <option value="">Assign driver</option>
-                        {(driversByBranch[order.branch.id] ?? []).map((driver) => (
-                          <option key={driver.id} value={driver.id}>{driver.name}</option>
-                        ))}
-                      </select>
-                      <span>{order.assignedDriver?.name ?? 'Unassigned'}</span>
+                      <span>{order.deliveryStatus === 'DELIVERED' || order.status === 'DELIVERED' ? 'Delivered'
+                        : order.deliveryStatus === 'ASSIGNED'
+                        ? (order.status === 'DONE' || order.status === 'DELIVERED' ? 'Ready for pickup' : 'Driver assigned — awaiting preparation')
+                        : order.deliveryStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery'
+                          : 'Waiting for driver assignment'}</span>
+                      <span>{order.assignedDriver?.name ?? 'No driver assigned'}</span>
                     </div>
                   ) : <span>{order.orderType.replace('_', ' ')}</span>}
                 </td>

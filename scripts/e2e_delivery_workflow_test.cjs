@@ -93,10 +93,30 @@ async function seedTestFixtures(prisma, bcrypt) {
   await prisma.branchManagerAssignment.createMany({
     data: branches.map((branch) => ({ userId: manager.id, branchId: branch.id })),
   });
+  const restrictedManager = await prisma.user.create({
+    data: {
+      name: 'Isolated Single Branch Manager',
+      email: 'single-manager@isolated.test',
+      password,
+      role: 'BRANCH_MANAGER',
+      branchId: branches[0].id,
+    },
+  });
+  await prisma.branchManagerAssignment.create({
+    data: { userId: restrictedManager.id, branchId: branches[0].id },
+  });
   const customer = await prisma.user.create({
     data: {
       name: 'Isolated Test Customer',
       email: 'customer@isolated.test',
+      password,
+      role: 'CUSTOMER',
+    },
+  });
+  const otherCustomer = await prisma.user.create({
+    data: {
+      name: 'Other Isolated Customer',
+      email: 'other-customer@isolated.test',
       password,
       role: 'CUSTOMER',
     },
@@ -134,7 +154,14 @@ async function seedTestFixtures(prisma, bcrypt) {
     ]);
     branchFixtures.push({ branch, chef, driver, menuItem });
   }
-  return { branches, admin, hqManager, manager, customer, branchFixtures };
+  await Promise.all(branchFixtures.map(({ branch, driver }) => prisma.branch.update({
+    where: { id: branch.id },
+    data: { designatedDeliveryDriverId: driver.id },
+  })));
+  return {
+    prisma, branches, admin, hqManager, manager, restrictedManager,
+    customer, otherCustomer, branchFixtures,
+  };
 }
 
 function tokenFor(user) {
@@ -146,10 +173,11 @@ function tokenFor(user) {
 }
 
 function createApi(baseUrl) {
-  return async (route, { method = 'GET', token, branchId, body } = {}) => {
+  return async (route, { method = 'GET', token, branchId, body, idempotencyKey } = {}) => {
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
     if (branchId !== undefined) headers['X-Branch-Id'] = String(branchId);
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
     if (body) headers['Content-Type'] = 'application/json';
     const response = await fetch(new URL(`/api${route}`, baseUrl), {
       method,
@@ -182,74 +210,97 @@ async function waitForServer(baseUrl, child, logs) {
   throw new Error(`Timed out starting isolated API:\n${logs.slice(-60).join('')}`);
 }
 
-async function runWorkflow(api, fixtures) {
-  const adminToken = tokenFor(fixtures.admin);
-  const hqManagerToken = tokenFor(fixtures.hqManager);
+async function runWorkflow(initialApi, fixtures, restartApi) {
+  let api = initialApi;
   const managerToken = tokenFor(fixtures.manager);
+  const restrictedManagerToken = tokenFor(fixtures.restrictedManager);
   const customerToken = tokenFor(fixtures.customer);
+  const otherCustomerToken = tokenFor(fixtures.otherCustomer);
   const visibleBranches = await api('/public/branches');
   assert.equal(visibleBranches.status, 200);
   assert.deepEqual(visibleBranches.data.map((branch) => branch.name).sort(), [...expectedBranches].sort());
+  assert.ok(visibleBranches.data.every((branch) => branch.deliveryAvailable));
 
   const managerBranches = await api('/branch-manager/branches', { token: managerToken });
   assert.equal(managerBranches.status, 200);
   assert.deepEqual(managerBranches.data.map((branch) => branch.name).sort(), [...expectedBranches].sort());
 
+  const restrictedAccess = await api('/branch-manager/orders', {
+    token: restrictedManagerToken,
+    branchId: fixtures.branches[1].id,
+  });
+  assert.equal(restrictedAccess.status, 403, 'branch staff cannot access an unassigned branch');
+
+  const firstFixture = fixtures.branchFixtures[0];
+  const beforeUnavailableCheckout = await fixtures.prisma.order.count();
+  await fixtures.prisma.branch.update({
+    where: { id: firstFixture.branch.id },
+    data: { designatedDeliveryDriverId: null },
+  });
+  const unavailable = await api('/customer/orders', {
+    method: 'POST',
+    token: customerToken,
+    body: {
+      branchId: firstFixture.branch.id,
+      orderType: 'DELIVERY',
+      items: [{ menuItemId: firstFixture.menuItem.id, quantity: 1 }],
+      recipientName: 'Isolated Recipient',
+      recipientPhone: '+15551234567',
+      deliveryAddress: `${firstFixture.branch.name} delivery test address`,
+    },
+  });
+  assert.equal(unavailable.status, 409);
+  assert.match(unavailable.data.error, /Delivery is unavailable/);
+  assert.equal(await fixtures.prisma.order.count(), beforeUnavailableCheckout);
+  await fixtures.prisma.branch.update({
+    where: { id: firstFixture.branch.id },
+    data: { designatedDeliveryDriverId: firstFixture.driver.id },
+  });
+
   const orders = [];
-  let privilegedAssignmentChecks = 0;
-  let crossBranchManagerDenials = 0;
-  let readyOrderAssignments = 0;
   for (const { branch, chef, driver, menuItem } of fixtures.branchFixtures) {
+    const checkoutKey = crypto.randomUUID();
+    const body = {
+      branchId: branch.id,
+      orderType: 'DELIVERY',
+      items: [{ menuItemId: menuItem.id, quantity: 1 }],
+      recipientName: 'Isolated Recipient',
+      recipientPhone: '+15551234567',
+      deliveryAddress: `${branch.name} delivery test address`,
+      deliveryInstructions: 'Test only',
+    };
     const placed = await api('/customer/orders', {
       method: 'POST',
       token: customerToken,
-      body: {
-        branchId: branch.id,
-        orderType: 'DELIVERY',
-        items: [{ menuItemId: menuItem.id, quantity: 1 }],
-        recipientName: 'Isolated Recipient',
-        recipientPhone: '+15551234567',
-        deliveryAddress: `${branch.name} delivery test address`,
-        deliveryInstructions: 'Test only',
-      },
+      body,
+      idempotencyKey: checkoutKey,
     });
     assert.equal(placed.status, 201, `${branch.name} checkout: ${JSON.stringify(placed.data)}`);
+    assert.equal(placed.data.assignedDriverId, driver.id, `${branch.name} was automatically assigned its designated driver`);
+    assert.equal(placed.data.deliveryStatus, 'ASSIGNED');
+    assert.ok(placed.data.assignedAt);
+    assert.equal(placed.data.assignedDriver.id, driver.id);
+    const retry = await api('/customer/orders', {
+      method: 'POST',
+      token: customerToken,
+      body,
+      idempotencyKey: checkoutKey,
+    });
+    assert.equal(retry.status, 200, 'same checkout request is idempotent');
+    assert.equal(retry.data.id, placed.data.id);
     orders.push({ branch, chef, driver, orderId: placed.data.id });
   }
+  assert.equal(await fixtures.prisma.order.count(), beforeUnavailableCheckout + 4);
 
+  api = await restartApi();
+  const customerOrdersAfterRestart = await api('/customer/orders', { token: customerToken });
+  assert.equal(customerOrdersAfterRestart.status, 200);
+  assert.equal(customerOrdersAfterRestart.data.length, 4);
+  assert.ok(customerOrdersAfterRestart.data.every((order) => order.deliveryStatus === 'ASSIGNED'));
+
+  let crossBranchDriverDenials = 0;
+  let waitingForKitchenChecks = 0;
   for (const { branch, chef, driver, orderId } of orders) {
-    const branchOrders = await api('/branch-manager/orders', {
-      token: managerToken,
-      branchId: branch.id,
-    });
-    assert.equal(branchOrders.status, 200);
-    assert.ok(branchOrders.data.every((order) => order.branchId === branch.id));
-    assert.ok(branchOrders.data.some((order) => order.id === orderId));
-
-    const wrongBranchView = await api('/branch-manager/orders', {
-      token: managerToken,
-      branchId: orders.find((entry) => entry.branch.id !== branch.id).branch.id,
-    });
-    assert.equal(wrongBranchView.status, 200);
-    assert.ok(wrongBranchView.data.every((order) => order.branchId !== branch.id));
-
-    const wrongDriverAssignment = await api(`/delivery-management/orders/${orderId}/driver`, {
-      method: 'PATCH',
-      token: managerToken,
-      branchId: branch.id,
-      body: { driverId: orders.find((entry) => entry.branch.id !== branch.id).driver.id },
-    });
-    assert.equal(wrongDriverAssignment.status, 400);
-
-    const wrongBranchSelection = await api(`/delivery-management/orders/${orderId}/driver`, {
-      method: 'PATCH',
-      token: managerToken,
-      branchId: orders.find((entry) => entry.branch.id !== branch.id).branch.id,
-      body: { driverId: driver.id },
-    });
-    assert.equal(wrongBranchSelection.status, 403);
-    crossBranchManagerDenials += 1;
-
     const login = await api('/auth/login', {
       method: 'POST',
       body: { email: driver.email, password: 'Isolated-Test-1234!' },
@@ -258,10 +309,44 @@ async function runWorkflow(api, fixtures) {
     assert.equal(login.data.user.role, 'DELIVERY_DRIVER');
     assert.equal(login.data.user.branchId, branch.id);
     const driverToken = login.data.token;
-
     const profile = await api('/driver/profile', { token: driverToken });
     assert.equal(profile.status, 200);
     assert.equal(profile.data.branch.name, branch.name);
+
+    const ownOrders = await api('/driver/orders', { token: driverToken });
+    assert.equal(ownOrders.status, 200);
+    assert.deepEqual(ownOrders.data.map((order) => order.id), [orderId]);
+    assert.equal(ownOrders.data[0].deliveryStatus, 'ASSIGNED');
+    assert.equal(ownOrders.data[0].status, 'PENDING');
+    const prematurePickup = await api(`/driver/orders/${orderId}/pickup`, {
+      method: 'PATCH',
+      token: driverToken,
+    });
+    assert.equal(prematurePickup.status, 409, 'an assigned, not-ready delivery remains visible and cannot be collected yet');
+    waitingForKitchenChecks += 1;
+
+    const otherOrder = orders.find((target) => target.branch.id !== branch.id);
+    const crossBranchRead = await api('/driver/orders', { token: driverToken });
+    assert.ok(crossBranchRead.data.every((order) => order.branch.name === branch.name));
+    const crossBranchMutation = await api(`/driver/orders/${otherOrder.orderId}/pickup`, {
+      method: 'PATCH',
+      token: driverToken,
+    });
+    assert.equal(crossBranchMutation.status, 404);
+    crossBranchDriverDenials += 1;
+
+    const managerOrdersBeforeReady = await api('/branch-manager/orders', {
+      token: managerToken,
+      branchId: branch.id,
+    });
+    assert.ok(managerOrdersBeforeReady.data.some((order) => order.id === orderId
+      && order.deliveryStatus === 'ASSIGNED'
+      && order.assignedDriverId === driver.id));
+    const managerCrossBranchRequest = await api('/branch-manager/orders', {
+      token: restrictedManagerToken,
+      branchId: branch.id,
+    });
+    if (branch.id !== fixtures.branches[0].id) assert.equal(managerCrossBranchRequest.status, 403);
 
     const chefToken = tokenFor(chef);
     assert.equal((await api(`/chef/orders/${orderId}/preparing`, {
@@ -271,50 +356,11 @@ async function runWorkflow(api, fixtures) {
       method: 'PATCH', token: chefToken,
     })).status, 200);
 
-    const assigned = await api(`/delivery-management/orders/${orderId}/driver`, {
-      method: 'PATCH',
-      token: managerToken,
-      branchId: branch.id,
-      body: { driverId: driver.id },
-    });
-    assert.equal(assigned.status, 200, `${branch.name} DONE order driver assignment`);
-    assert.equal(assigned.data.status, 'DONE');
-    assert.equal(assigned.data.deliveryStatus, 'ASSIGNED');
-    assert.equal(assigned.data.assignedDriverId, driver.id);
-    readyOrderAssignments += 1;
-
-    if (branch.name === expectedBranches[0]) {
-      for (const token of [adminToken, hqManagerToken]) {
-        const privilegedAssignment = await api(`/delivery-management/orders/${orderId}/driver`, {
-          method: 'PATCH',
-          token,
-          body: { driverId: driver.id },
-        });
-        assert.equal(privilegedAssignment.status, 200);
-        assert.equal(privilegedAssignment.data.branchId, branch.id);
-        privilegedAssignmentChecks += 1;
-      }
-    }
-
-    const managerAssignedOrders = await api('/branch-manager/orders', {
-      token: managerToken,
-      branchId: branch.id,
-    });
-    const managerAssignedOrder = managerAssignedOrders.data.find((order) => order.id === orderId);
-    assert.equal(managerAssignedOrder.deliveryStatus, 'ASSIGNED');
-    assert.equal(managerAssignedOrder.assignedDriverId, driver.id);
-
     const customerAssignedOrders = await api('/customer/orders', { token: customerToken });
     const customerAssignedOrder = customerAssignedOrders.data.find((order) => order.id === orderId);
     assert.equal(customerAssignedOrder.status, 'DONE');
     assert.equal(customerAssignedOrder.deliveryStatus, 'ASSIGNED');
     assert.equal(customerAssignedOrder.assignedDriver.id, driver.id);
-
-    const ownOrders = await api('/driver/orders', { token: driverToken });
-    assert.equal(ownOrders.status, 200);
-    assert.deepEqual(ownOrders.data.map((order) => order.id), [orderId]);
-    assert.equal(ownOrders.data[0].status, 'DONE');
-    assert.equal(ownOrders.data[0].deliveryStatus, 'ASSIGNED');
 
     const pickedUp = await api(`/driver/orders/${orderId}/pickup`, {
       method: 'PATCH',
@@ -326,18 +372,11 @@ async function runWorkflow(api, fixtures) {
       token: managerToken,
       branchId: branch.id,
     });
-    assert.equal(
-      managerOutForDelivery.data.find((order) => order.id === orderId).deliveryStatus,
-      'OUT_FOR_DELIVERY',
-    );
+    assert.equal(managerOutForDelivery.data.find((order) => order.id === orderId).deliveryStatus, 'OUT_FOR_DELIVERY');
     const customerOutForDelivery = await api('/customer/orders', { token: customerToken });
-    assert.equal(
-      customerOutForDelivery.data.find((order) => order.id === orderId).deliveryStatus,
-      'OUT_FOR_DELIVERY',
-    );
+    assert.equal(customerOutForDelivery.data.find((order) => order.id === orderId).deliveryStatus, 'OUT_FOR_DELIVERY');
     assert.equal((await api(`/driver/orders/${orderId}/pickup`, {
-      method: 'PATCH',
-      token: driverToken,
+      method: 'PATCH', token: driverToken,
     })).status, 200, 'pickup retry is idempotent');
 
     const delivered = await api(`/driver/orders/${orderId}/delivered`, {
@@ -345,64 +384,71 @@ async function runWorkflow(api, fixtures) {
       token: driverToken,
     });
     assert.equal(delivered.status, 200);
+    assert.equal(delivered.data.status, 'DONE', 'delivery completion does not change the kitchen status');
     assert.ok(delivered.data.deliveredAt);
     const managerDeliveredOrders = await api('/branch-manager/orders', {
       token: managerToken,
       branchId: branch.id,
     });
-    assert.equal(
-      managerDeliveredOrders.data.find((order) => order.id === orderId).deliveryStatus,
-      'DELIVERED',
-    );
+    assert.equal(managerDeliveredOrders.data.find((order) => order.id === orderId).deliveryStatus, 'DELIVERED');
     const customerDeliveredOrders = await api('/customer/orders', { token: customerToken });
-    assert.equal(
-      customerDeliveredOrders.data.find((order) => order.id === orderId).deliveryStatus,
-      'DELIVERED',
-    );
-    const driverHistory = await api('/driver/orders', { token: driverToken });
-    assert.equal(driverHistory.data.find((order) => order.id === orderId).deliveryStatus, 'DELIVERED');
+    const customerDelivered = customerDeliveredOrders.data.find((order) => order.id === orderId);
+    assert.equal(customerDelivered.deliveryStatus, 'DELIVERED');
+    assert.equal(customerDelivered.status, 'DONE');
+    assert.equal(customerDelivered.paymentStatus, 'UNPAID');
     assert.equal((await api(`/driver/orders/${orderId}/delivered`, {
-      method: 'PATCH',
-      token: driverToken,
+      method: 'PATCH', token: driverToken,
     })).status, 200, 'delivery retry is idempotent');
+    const freshLogin = await api('/auth/login', {
+      method: 'POST',
+      body: { email: driver.email, password: 'Isolated-Test-1234!' },
+    });
+    const historyAfterLogin = await api('/driver/orders', { token: freshLogin.data.token });
+    assert.equal(historyAfterLogin.data.find((order) => order.id === orderId).deliveryStatus, 'DELIVERED');
   }
 
-  let crossBranchDenials = 0;
-  for (const { branch, driver } of fixtures.branchFixtures) {
-    const ordersForDriver = await api('/driver/orders', { token: tokenFor(driver) });
-    assert.equal(ordersForDriver.status, 200);
-    assert.ok(ordersForDriver.data.every((order) => order.branch.name === branch.name));
-    for (const target of orders) {
-      if (target.branch.id === branch.id) continue;
-      const denied = await api(`/driver/orders/${target.orderId}/pickup`, {
-        method: 'PATCH',
-        token: tokenFor(driver),
-      });
-      assert.equal(denied.status, 404);
-      crossBranchDenials += 1;
-    }
-  }
-  assert.equal(crossBranchDenials, 12);
-  assert.equal(crossBranchManagerDenials, 4);
-  assert.equal(privilegedAssignmentChecks, 2);
+  assert.equal(crossBranchDriverDenials, 4);
+  assert.equal(waitingForKitchenChecks, 4);
+  const otherCustomerOrders = await api('/customer/orders', { token: otherCustomerToken });
+  assert.equal(otherCustomerOrders.data.length, 0);
+  assert.equal((await api(`/customer/receipt/${orders[0].orderId}`, {
+    token: otherCustomerToken,
+  })).status, 404, 'customers cannot read another customer receipt');
 
+  await fixtures.prisma.order.update({
+    where: { id: orders[0].orderId },
+    data: { paymentStatus: 'PAID' },
+  });
+  const receipt = await api(`/customer/receipt/${orders[0].orderId}`, { token: customerToken });
+  assert.equal(receipt.status, 200);
+  assert.equal(receipt.data.deliveryStatus, 'DELIVERED');
+  assert.equal(receipt.data.assignedDriverName, orders[0].driver.name);
+  assert.ok(receipt.data.deliveredAt);
+
+  const hqOrders = await api('/hq/orders', { token: tokenFor(fixtures.hqManager) });
+  assert.equal(hqOrders.status, 200);
+  assert.ok(orders.every(({ orderId }) => hqOrders.data.some((order) => order.id === orderId)));
   const customerOrders = await api('/customer/orders', { token: customerToken });
-  assert.equal(customerOrders.status, 200);
-  assert.equal(customerOrders.data.length, 4);
   for (const order of customerOrders.data) {
-    assert.equal(order.status, 'DELIVERED');
+    assert.equal(order.status, 'DONE');
     assert.equal(order.deliveryStatus, 'DELIVERED');
-    assert.equal(order.paymentStatus, 'UNPAID');
     assert.ok(order.pickedUpAt);
     assert.ok(order.deliveredAt);
   }
+  assert.equal(customerOrders.data.filter((order) => order.paymentStatus === 'UNPAID').length, 3);
   return {
     activeBranches: expectedBranches,
-    workflows: orders.length,
-    readyOrderAssignments,
-    crossBranchDriverDenials: crossBranchDenials,
-    crossBranchManagerDenials,
-    privilegedAssignmentChecks,
+    automaticAssignments: orders.length,
+    completedWorkflows: orders.length,
+    restartPersistence: true,
+    idempotentCheckoutRetries: orders.length,
+    unavailableBranchRejected: true,
+    assignedBeforeKitchenReady: waitingForKitchenChecks,
+    crossBranchDriverDenials,
+    crossBranchStaffDenial: true,
+    customerIsolation: true,
+    unpaidOrdersRemainUnpaidAfterDelivery: 3,
+    receiptShowsDeliveryCompletion: true,
   };
 }
 
@@ -424,23 +470,34 @@ async function main() {
 
     const port = await unusedPort();
     const baseUrl = `http://127.0.0.1:${port}`;
-    apiProcess = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
-      cwd: rootDirectory,
-      env: {
-        ...process.env,
-        DATABASE_URL: databaseUrl,
-        FRONTEND_URL: 'http://127.0.0.1:5173',
-        JWT_SECRET: jwtSecret,
-        NODE_ENV: 'production',
-        PORT: String(port),
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    apiProcess.stdout.on('data', (chunk) => logs.push(chunk.toString()));
-    apiProcess.stderr.on('data', (chunk) => logs.push(chunk.toString()));
-    await waitForServer(baseUrl, apiProcess, logs);
-    const result = await runWorkflow(createApi(baseUrl), fixtures);
-    console.log(JSON.stringify({ ...result, checkoutPaymentRemainedUnpaid: true, isolatedDatabaseCleaned: true }, null, 2));
+    const startApi = async () => {
+      apiProcess = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+        cwd: rootDirectory,
+        env: {
+          ...process.env,
+          DATABASE_URL: databaseUrl,
+          FRONTEND_URL: 'http://127.0.0.1:5173',
+          JWT_SECRET: jwtSecret,
+          NODE_ENV: 'production',
+          PORT: String(port),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      apiProcess.stdout.on('data', (chunk) => logs.push(chunk.toString()));
+      apiProcess.stderr.on('data', (chunk) => logs.push(chunk.toString()));
+      await waitForServer(baseUrl, apiProcess, logs);
+      return createApi(baseUrl);
+    };
+    const restartApi = async () => {
+      const previousProcess = apiProcess;
+      if (previousProcess && previousProcess.exitCode === null) {
+        previousProcess.kill();
+        await new Promise((resolve) => previousProcess.once('exit', resolve));
+      }
+      return startApi();
+    };
+    const result = await runWorkflow(await startApi(), fixtures, restartApi);
+    console.log(JSON.stringify({ ...result, isolatedDatabaseCleaned: true }, null, 2));
   } finally {
     if (apiProcess && apiProcess.exitCode === null) {
       apiProcess.kill();

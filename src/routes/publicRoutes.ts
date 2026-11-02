@@ -5,8 +5,24 @@ import prisma from '../lib/prisma.js';
 const router = Router();
 
 router.get('/branches', async (_req: Request, res: Response) => {
-  const branches = await prisma.branch.findMany({ where: { isActive: true }, orderBy: { id: 'asc' } });
-  res.json(branches);
+  const branches = await prisma.branch.findMany({
+    where: { isActive: true },
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      designatedDeliveryDriver: {
+        select: { role: true, branchId: true, isActive: true },
+      },
+    },
+    orderBy: { id: 'asc' },
+  });
+  res.json(branches.map(({ designatedDeliveryDriver, ...branch }) => ({
+    ...branch,
+    deliveryAvailable: Boolean(designatedDeliveryDriver?.isActive
+      && designatedDeliveryDriver.role === 'DELIVERY_DRIVER'
+      && designatedDeliveryDriver.branchId === branch.id),
+  })));
 });
 
 router.get('/branches/:id', async (req: Request, res: Response) => {
@@ -18,16 +34,32 @@ router.get('/branches/:id', async (req: Request, res: Response) => {
 
   const branch = await prisma.branch.findUnique({
     where: { id },
-    include: {
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      phone: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
       tables: { where: { isAvailable: true } },
       menuItems: { where: { isAvailable: true } },
+      designatedDeliveryDriver: {
+        select: { role: true, branchId: true, isActive: true },
+      },
     },
   });
   if (!branch || !branch.isActive) {
     res.status(404).json({ error: 'This location is no longer active. Please select an active location.' });
     return;
   }
-  res.json(branch);
+  const { designatedDeliveryDriver, ...publicBranch } = branch;
+  res.json({
+    ...publicBranch,
+    deliveryAvailable: Boolean(designatedDeliveryDriver?.isActive
+      && designatedDeliveryDriver.role === 'DELIVERY_DRIVER'
+      && designatedDeliveryDriver.branchId === branch.id),
+  });
 });
 
 router.get('/tables/:id/availability', async (req: Request, res: Response) => {

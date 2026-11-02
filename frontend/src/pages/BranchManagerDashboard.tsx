@@ -50,12 +50,6 @@ interface Order {
   customer?: { name: string };
 }
 
-interface Driver {
-  id: number;
-  name: string;
-  branchId: number;
-}
-
 interface Table {
   id: number;
   tableNumber: number;
@@ -86,7 +80,6 @@ export default function BranchManagerDashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
-  const [drivers, setDrivers] = useState<Driver[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [driverName, setDriverName] = useState('');
   const [driverEmail, setDriverEmail] = useState('');
@@ -113,7 +106,6 @@ export default function BranchManagerDashboard() {
       setOrders([]);
       setBookings([]);
       setTables([]);
-      setDrivers([]);
       setMenuItems([]);
       setError('');
     }
@@ -134,13 +126,12 @@ export default function BranchManagerDashboard() {
     try {
       const byBranch = await Promise.all(scopedBranches.map(async (branch) => {
         const config = branchConfig(branch.id);
-        const [salesResponse, staffResponse, ordersResponse, bookingsResponse, tablesResponse, driversResponse, menuResponse] = await Promise.all([
+        const [salesResponse, staffResponse, ordersResponse, bookingsResponse, tablesResponse, menuResponse] = await Promise.all([
           api.get<SalesData>('/branch-manager/sales', config),
           api.get<StaffMember[]>('/branch-manager/staff', config),
           api.get<Order[]>('/branch-manager/orders', config),
           api.get<Booking[]>('/branch-manager/bookings', config),
           api.get<Table[]>('/branch-manager/tables', config),
-          api.get<Driver[]>('/delivery-management/drivers', config),
           api.get<MenuItem[]>('/branch-manager/menu', config),
         ]);
         return {
@@ -150,7 +141,6 @@ export default function BranchManagerDashboard() {
           orders: ordersResponse.data,
           bookings: bookingsResponse.data,
           tables: tablesResponse.data,
-          drivers: driversResponse.data,
           menu: menuResponse.data,
         };
       }));
@@ -168,10 +158,6 @@ export default function BranchManagerDashboard() {
       setOrders(byBranch.flatMap(({ orders: branchOrders }) => branchOrders));
       setBookings(byBranch.flatMap(({ bookings: branchBookings }) => branchBookings));
       setTables(byBranch.flatMap(({ tables: branchTables }) => branchTables));
-      setDrivers(byBranch.flatMap(({ branch, drivers: branchDrivers }) => branchDrivers.map((driver) => ({
-        ...driver,
-        branchId: branch.id,
-      }))));
       setMenuItems(byBranch.flatMap(({ branch, menu }) => menu.map((item) => ({
         ...item,
         branchId: branch.id,
@@ -211,10 +197,15 @@ export default function BranchManagerDashboard() {
 
   useEffect(() => {
     if (branches.length === 0) return undefined;
-    const refresh = setInterval(() => {
+    const refreshData = () => {
       void loadDashboardData(branches, selectedBranchId);
-    }, 10000);
-    return () => clearInterval(refresh);
+    };
+    const refresh = setInterval(refreshData, 10000);
+    window.addEventListener('focus', refreshData);
+    return () => {
+      clearInterval(refresh);
+      window.removeEventListener('focus', refreshData);
+    };
   }, [branches, loadDashboardData, selectedBranchId]);
 
   const selectedBranch = selectedBranchId === 'all'
@@ -241,7 +232,7 @@ export default function BranchManagerDashboard() {
       return;
     }
     try {
-      await api.post('/branch-manager/staff/drivers', {
+      const response = await api.post<{ isDesignated: boolean }>('/branch-manager/staff/drivers', {
         name: driverName,
         email: driverEmail,
         password: driverPassword,
@@ -249,7 +240,9 @@ export default function BranchManagerDashboard() {
       setDriverName('');
       setDriverEmail('');
       setDriverPassword('');
-      setSuccess(`Delivery driver created for ${selectedBranch.name}.`);
+      setSuccess(response.data.isDesignated
+        ? `Delivery driver created and designated for ${selectedBranch.name}.`
+        : `Delivery driver created for ${selectedBranch.name}; automatic deliveries remain assigned to the existing designated driver.`);
       setError('');
       await loadDashboardData(branches, selectedBranchId);
     } catch (requestError: unknown) {
@@ -257,24 +250,6 @@ export default function BranchManagerDashboard() {
         ? (requestError as { response?: { data?: { error?: string } } }).response?.data?.error
         : undefined;
       setError(message ?? 'Unable to create delivery driver.');
-      setSuccess('');
-    }
-  }
-
-  async function assignDriver(order: Order, driverId: number) {
-    try {
-      const response = await api.patch<Order>(
-        `/delivery-management/orders/${order.id}/driver`,
-        { driverId },
-        branchConfig(order.branchId),
-      );
-      setOrders((previous) => previous.map((candidate) => candidate.id === order.id
-        ? { ...candidate, ...response.data }
-        : candidate));
-      setSuccess(`Driver assigned to order #${order.id} at ${order.branch.name}.`);
-      setError('');
-    } catch {
-      setError('Unable to assign this driver. Confirm the selected branch and reload the order.');
       setSuccess('');
     }
   }
@@ -343,6 +318,22 @@ export default function BranchManagerDashboard() {
       setError('Unable to update this menu item.');
     }
   }
+
+  const deliveryOrders = orders.filter((order) => order.orderType === 'DELIVERY');
+  const deliveryGroups = [
+    {
+      title: 'Awaiting assignment',
+      orders: deliveryOrders.filter((order) => order.status !== 'CANCELLED'
+        && order.status !== 'DELIVERED'
+        && !order.deliveryStatus),
+    },
+    { title: 'Assigned / awaiting pickup', orders: deliveryOrders.filter((order) => order.deliveryStatus === 'ASSIGNED') },
+    { title: 'Out for delivery', orders: deliveryOrders.filter((order) => order.deliveryStatus === 'OUT_FOR_DELIVERY') },
+    {
+      title: 'Delivered history',
+      orders: deliveryOrders.filter((order) => order.deliveryStatus === 'DELIVERED' || order.status === 'DELIVERED'),
+    },
+  ];
 
   return (
     <div className="page">
@@ -514,14 +505,54 @@ export default function BranchManagerDashboard() {
         </table>
       )}
 
-      <div className="section-title">Orders &amp; Deliveries</div>
-      {orders.length === 0 ? <div className="empty-state">No orders found in this view.</div> : (
+      <div className="section-title">Delivery Orders</div>
+      {deliveryOrders.length === 0 ? <div className="empty-state">No delivery orders found in this view.</div> : (
+        <div className="delivery-monitor">
+          {deliveryGroups.map((group) => (
+            <section key={group.title}>
+              <h3>{group.title}</h3>
+              {group.orders.length === 0 ? <div className="empty-state">No orders in this category.</div> : (
+                <table className="data-table">
+                  <thead><tr><th>Location</th><th>Order</th><th>Recipient</th><th>Kitchen</th><th>Delivery</th><th>Driver</th></tr></thead>
+                  <tbody>{group.orders.map((order) => {
+                    const preparationStatus = order.deliveryStatus === 'DELIVERED' && order.status === 'DELIVERED'
+                      ? 'DONE'
+                      : order.status;
+                    const isDelivered = order.deliveryStatus === 'DELIVERED' || order.status === 'DELIVERED';
+                    const deliveryLabel = isDelivered ? 'Delivered'
+                      : order.deliveryStatus === 'ASSIGNED'
+                      ? (preparationStatus === 'DONE' ? 'Ready for pickup' : 'Driver assigned — awaiting preparation')
+                      : order.deliveryStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery'
+                        : 'Waiting for driver assignment';
+                    return (
+                      <tr key={`${order.branchId}-${order.id}`}>
+                        <td>{order.branch.name}</td>
+                        <td>#{order.id}</td>
+                        <td>
+                          {order.recipientName} · {order.recipientPhone}
+                          {order.deliveryAddress && <div>{order.deliveryAddress}</div>}
+                          {order.deliveryInstructions && <small>Instructions: {order.deliveryInstructions}</small>}
+                        </td>
+                        <td><span className={`badge badge-${preparationStatus.toLowerCase()}`}>{preparationStatus}</span></td>
+                        <td>{deliveryLabel}</td>
+                        <td>{order.assignedDriver?.name ?? 'Waiting for driver assignment'}</td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+
+      <div className="section-title">Orders &amp; Collection</div>
+      {orders.filter((order) => order.orderType !== 'DELIVERY').length === 0
+        ? <div className="empty-state">No dine-in or collection orders found in this view.</div> : (
         <table className="data-table">
           <thead><tr><th>Location</th><th>Order</th><th>Customer</th><th>Total</th><th>Preparation</th><th>Delivery / collection</th><th>Date</th></tr></thead>
-          <tbody>{orders.map((order) => {
-            const preparationStatus = order.orderType === 'DELIVERY' && order.deliveryStatus === 'DELIVERED'
-              ? 'DONE'
-              : order.status;
+          <tbody>{orders.filter((order) => order.orderType !== 'DELIVERY').map((order) => {
+            const preparationStatus = order.status;
             return (
               <tr key={`${order.branchId}-${order.id}`}>
                 <td>{order.branch.name}</td>
@@ -529,29 +560,7 @@ export default function BranchManagerDashboard() {
                 <td>{order.customer?.name ?? 'Walk-in'}</td>
                 <td><span className="price">€{order.total.toFixed(2)}</span></td>
                 <td><span className={`badge badge-${preparationStatus.toLowerCase()}`}>{preparationStatus}</span></td>
-                <td>{order.orderType === 'DELIVERY' ? (
-                  <div className="delivery-order-cell">
-                    <div>{order.recipientName} · {order.recipientPhone}</div>
-                    <div>{order.deliveryAddress}</div>
-                    {order.deliveryInstructions && <small>Instructions: {order.deliveryInstructions}</small>}
-                    <div className="delivery-assignment">
-                      <span className={`badge badge-${(order.deliveryStatus ?? 'unassigned').toLowerCase()}`}>{order.deliveryStatus ?? 'UNASSIGNED'}</span>
-                      <select
-                        aria-label={`Assign driver to order ${order.id} at ${order.branch.name}`}
-                        value={order.assignedDriver?.id ?? ''}
-                        disabled={!canChangeBranchRecords || order.branchId !== selectedBranch?.id || order.status === 'CANCELLED'
-                          || order.status === 'DELIVERED' || order.deliveryStatus === 'OUT_FOR_DELIVERY' || order.deliveryStatus === 'DELIVERED'}
-                        onChange={(event) => { if (event.target.value) void assignDriver(order, Number(event.target.value)); }}
-                      >
-                        <option value="">Assign driver</option>
-                        {drivers.filter((driver) => driver.branchId === order.branchId).map((driver) => (
-                          <option key={driver.id} value={driver.id}>{driver.name}</option>
-                        ))}
-                      </select>
-                      <span>{order.assignedDriver?.name ?? 'No driver assigned'}</span>
-                    </div>
-                  </div>
-                ) : <span>{order.orderType.replace('_', ' ')}</span>}</td>
+                <td>{order.orderType.replace('_', ' ')}</td>
                 <td>{new Date(order.createdAt).toLocaleDateString()}</td>
               </tr>
             );

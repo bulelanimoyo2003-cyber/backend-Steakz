@@ -8,6 +8,7 @@ interface Branch {
   id: number;
   name: string;
   address: string;
+  deliveryAvailable: boolean;
 }
 
 interface MenuItem {
@@ -175,6 +176,15 @@ export default function MenuPage() {
       return;
     }
 
+    const selectedBranch = activeBranches.find((branch) => branch.id === selectedId);
+    if (orderType === 'DELIVERY' && !selectedBranch?.deliveryAvailable) {
+      setNotice({
+        type: 'error',
+        text: `Delivery is currently unavailable at ${selectedBranch?.name ?? 'this location'}. Choose another active location or select collection.`,
+      });
+      return;
+    }
+
     if (orderType === 'DELIVERY'
       && (!recipientName.trim()
         || !/^\+?[0-9\s().-]{7,30}$/.test(recipientPhone.trim())
@@ -272,6 +282,11 @@ export default function MenuPage() {
 
           {orderType === 'DELIVERY' && (
             <div className="delivery-details">
+              {selectedId && !branches.find((branch) => branch.id === selectedId)?.deliveryAvailable && (
+                <div className="alert alert-error" role="alert">
+                  Delivery is unavailable at this location because no designated driver is available.
+                </div>
+              )}
               <div className="form-group">
                 <label htmlFor="recipient-name">Recipient name</label>
                 <input id="recipient-name" value={recipientName} maxLength={120} onChange={(event) => {
@@ -328,7 +343,15 @@ export default function MenuPage() {
           </div>
 
           <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-            <button className="btn btn-primary" type="button" onClick={handleCheckout} disabled={cart.length === 0 || checkoutInProgress}>
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={handleCheckout}
+              disabled={cart.length === 0 || checkoutInProgress
+                || (orderType === 'DELIVERY'
+                  && selectedId !== null
+                  && !branches.find((branch) => branch.id === selectedId)?.deliveryAvailable)}
+            >
               {checkoutInProgress ? 'Placing order…' : 'Checkout'}
             </button>
             <button

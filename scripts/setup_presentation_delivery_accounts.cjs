@@ -88,21 +88,79 @@ async function ensurePresentationDeliveryAccounts(prisma, hashPassword) {
 
   return prisma.$transaction(async (transaction) => {
     const result = [];
+    const branchDrivers = new Map();
     for (const account of accounts) {
-      const data = {
-        name: account.driverName,
-        email: account.email,
-        password: account.passwordHash,
-        role: 'DELIVERY_DRIVER',
-        branchId: account.branchId,
-        isActive: true,
-      };
+      const data = account.existingId
+        ? { password: account.passwordHash, isActive: true }
+        : {
+          name: account.driverName,
+          email: account.email,
+          password: account.passwordHash,
+          role: 'DELIVERY_DRIVER',
+          branchId: account.branchId,
+          isActive: true,
+        };
       const user = account.existingId
         ? await transaction.user.update({ where: { id: account.existingId }, data })
         : await transaction.user.create({ data });
+      await transaction.branch.update({
+        where: { id: account.branchId },
+        data: { designatedDeliveryDriverId: user.id },
+      });
+      branchDrivers.set(account.branchId, user.id);
       result.push({ name: user.name, email: user.email, branch: account.name, role: user.role });
     }
-    return result;
+
+    const pendingOrders = await transaction.order.findMany({
+      where: {
+        orderType: 'DELIVERY',
+        status: { notIn: ['CANCELLED', 'DELIVERED'] },
+        OR: [
+          { deliveryStatus: null },
+          { assignedDriverId: null },
+        ],
+      },
+      select: { id: true, branchId: true, assignedDriverId: true, deliveryStatus: true },
+      orderBy: { id: 'asc' },
+    });
+    const repairedOrderIds = [];
+    const unmatchedOrders = [];
+    for (const order of pendingOrders) {
+      const driverId = branchDrivers.get(order.branchId);
+      if (!driverId || order.assignedDriverId !== null || order.deliveryStatus !== null) {
+        unmatchedOrders.push({
+          id: order.id,
+          branchId: order.branchId,
+          reason: !driverId ? 'No designated driver is configured for this branch.' : 'The existing assignment state is inconsistent.',
+        });
+        continue;
+      }
+      const updated = await transaction.order.updateMany({
+        where: {
+          id: order.id,
+          branchId: order.branchId,
+          orderType: 'DELIVERY',
+          status: { notIn: ['CANCELLED', 'DELIVERED'] },
+          deliveryStatus: null,
+          assignedDriverId: null,
+        },
+        data: {
+          assignedDriverId: driverId,
+          deliveryStatus: 'ASSIGNED',
+          assignedAt: new Date(),
+        },
+      });
+      if (updated.count !== 1) {
+        throw new Error(`Order ${order.id} changed during the presentation delivery repair.`);
+      }
+      repairedOrderIds.push(order.id);
+    }
+
+    return {
+      accounts: result,
+      repairedOrderIds,
+      unmatchedOrders,
+    };
   });
 }
 
@@ -113,8 +171,8 @@ async function main() {
   const databasePath = getPresentationDatabasePath(process.env.DATABASE_URL);
   const prisma = new PrismaClient({ datasources: { db: { url: `file:${databasePath.replace(/\\/g, '/')}` } } });
   try {
-    const accounts = await ensurePresentationDeliveryAccounts(prisma, (password, rounds) => bcrypt.hash(password, rounds));
-    console.log(JSON.stringify({ database: 'local presentation SQLite', accounts }, null, 2));
+    const result = await ensurePresentationDeliveryAccounts(prisma, (password, rounds) => bcrypt.hash(password, rounds));
+    console.log(JSON.stringify({ database: 'local presentation SQLite', ...result }, null, 2));
   } finally {
     await prisma.$disconnect();
   }

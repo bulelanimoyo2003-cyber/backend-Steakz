@@ -142,14 +142,8 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
       deliveryInstructions: 'Use the side entrance',
       items: [{ menuItemId: menuItem.id, quantity: 1 }],
     });
-    if (branchResults.length > 0) {
-      await expectStatus(baseUrl, 'PATCH', `/delivery-management/orders/${order.id}/driver`, managerToken, 400, {
-        driverId: branchResults[0].driver.id,
-      }, configBranchId);
-    }
-    await expectStatus(baseUrl, 'PATCH', `/delivery-management/orders/${order.id}/driver`, managerToken, 200, {
-      driverId: driver.id,
-    }, configBranchId);
+    assert.equal(order.deliveryStatus, 'ASSIGNED');
+    assert.equal(order.assignedDriverId, driver.id);
     const driverToken = (await login(baseUrl, driver.email, 'Password123!', 'DELIVERY_DRIVER')).token;
     await expectStatus(baseUrl, 'PATCH', `/driver/orders/${order.id}/pickup`, driverToken, 409);
     await expectStatus(baseUrl, 'PATCH', `/chef/orders/${order.id}/preparing`, chefToken, 200);

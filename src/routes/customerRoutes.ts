@@ -195,7 +195,14 @@ router.post('/orders', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'A valid branchId is required for collection and delivery orders.' });
       return;
     }
-    const branch = await prisma.branch.findUnique({ where: { id: requestedBranchId } });
+    const branch = await prisma.branch.findUnique({
+      where: { id: requestedBranchId },
+      include: {
+        designatedDeliveryDriver: {
+          select: { id: true, role: true, branchId: true, isActive: true },
+        },
+      },
+    });
     if (!branch || !branch.isActive) {
       res.status(400).json({ error: 'This location is no longer active. Please select an active location.' });
       return;
@@ -268,7 +275,10 @@ router.post('/orders', async (req: Request, res: Response) => {
   const findExistingCheckout = () => checkoutRequestId
     ? prisma.order.findUnique({
       where: { checkoutRequestId },
-      include: { items: { include: { menuItem: true } } },
+      include: {
+        items: { include: { menuItem: true } },
+        assignedDriver: { select: { id: true, name: true } },
+      },
     })
     : null;
 
@@ -288,29 +298,84 @@ router.post('/orders', async (req: Request, res: Response) => {
     return;
   }
 
-  try {
-    const order = await prisma.order.create({
-      data: {
-        customerId,
-        bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
-        branchId: resolvedBranchId,
-        orderType,
-        checkoutRequestId,
-        ...deliveryDetails,
-        total,
-        items: {
-          create: items.map((item) => ({
-            menuItemId: item.menuItemId,
-            quantity: item.quantity,
-            unitPrice: priceMap[item.menuItemId] ?? 0,
-          })),
+  if (orderType === 'DELIVERY') {
+    const designatedDriver = (await prisma.branch.findUnique({
+      where: { id: resolvedBranchId },
+      select: {
+        isActive: true,
+        designatedDeliveryDriver: {
+          select: { id: true, role: true, branchId: true, isActive: true },
         },
       },
-      include: { items: { include: { menuItem: true } } },
+    }))?.designatedDeliveryDriver;
+    if (!designatedDriver || !designatedDriver.isActive
+      || designatedDriver.role !== 'DELIVERY_DRIVER'
+      || designatedDriver.branchId !== resolvedBranchId) {
+      res.status(409).json({
+        error: 'Delivery is unavailable at this location because no eligible delivery driver is designated.',
+      });
+      return;
+    }
+  }
+
+  try {
+    const order = await prisma.$transaction(async (transaction) => {
+      const branch = orderType === 'DELIVERY'
+        ? await transaction.branch.findUnique({
+          where: { id: resolvedBranchId },
+          select: {
+            isActive: true,
+            designatedDeliveryDriver: {
+              select: { id: true, role: true, branchId: true, isActive: true },
+            },
+          },
+        })
+        : null;
+      const driver = branch?.designatedDeliveryDriver;
+      if (orderType === 'DELIVERY' && (!branch?.isActive || !driver || !driver.isActive
+        || driver.role !== 'DELIVERY_DRIVER' || driver.branchId !== resolvedBranchId)) {
+        throw new DeliveryUnavailableError();
+      }
+
+      return transaction.order.create({
+        data: {
+          customerId,
+          bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
+          branchId: resolvedBranchId,
+          orderType,
+          checkoutRequestId,
+          ...(orderType === 'DELIVERY'
+            ? {
+              assignedDriverId: driver!.id,
+              deliveryStatus: 'ASSIGNED' as const,
+              assignedAt: new Date(),
+            }
+            : {}),
+          ...deliveryDetails,
+          total,
+          items: {
+            create: items.map((item) => ({
+              menuItemId: item.menuItemId,
+              quantity: item.quantity,
+              unitPrice: priceMap[item.menuItemId] ?? 0,
+            })),
+          },
+        },
+        include: {
+          items: { include: { menuItem: true } },
+          assignedDriver: { select: { id: true, name: true } },
+        },
+      });
     });
 
     res.status(201).json(order);
   } catch (error) {
+    if (error instanceof DeliveryUnavailableError) {
+      res.status(409).json({
+        error: 'Delivery is unavailable at this location because no eligible delivery driver is designated.',
+      });
+      return;
+    }
     if (checkoutRequestId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const concurrentOrder = await findExistingCheckout();
       if (concurrentOrder?.customerId === customerId
@@ -327,6 +392,8 @@ router.post('/orders', async (req: Request, res: Response) => {
   }
 });
 
+class DeliveryUnavailableError extends Error {}
+
 function buildReceiptNumber(order: { id: number; createdAt: Date }) {
   return `STEAKZ-${order.id}-${Math.floor(order.createdAt.getTime() / 1000)}`;
 }
@@ -334,7 +401,10 @@ function buildReceiptNumber(order: { id: number; createdAt: Date }) {
 router.get('/receipts', async (req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
     where: { customerId: req.user!.id, paymentStatus: 'PAID' },
-    include: { branch: { select: { name: true } } },
+    include: {
+      branch: { select: { name: true } },
+      assignedDriver: { select: { name: true } },
+    },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -345,6 +415,10 @@ router.get('/receipts', async (req: Request, res: Response) => {
     dateTime: order.createdAt.toISOString(),
     totalAmount: order.total,
     paymentStatus: order.paymentStatus,
+    orderType: order.orderType,
+    deliveryStatus: order.deliveryStatus,
+    assignedDriverName: order.assignedDriver?.name ?? null,
+    deliveredAt: order.deliveredAt?.toISOString() ?? null,
   })));
 });
 
@@ -361,6 +435,7 @@ router.get('/receipt/:orderId', async (req: Request, res: Response) => {
       items: { include: { menuItem: true } },
       customer: { select: { name: true } },
       branch: { select: { name: true } },
+      assignedDriver: { select: { name: true } },
     },
   });
 
@@ -384,6 +459,10 @@ router.get('/receipt/:orderId', async (req: Request, res: Response) => {
     })),
     totalAmount: order.total,
     paymentStatus: order.paymentStatus,
+    orderType: order.orderType,
+    deliveryStatus: order.deliveryStatus,
+    assignedDriverName: order.assignedDriver?.name ?? null,
+    deliveredAt: order.deliveredAt?.toISOString() ?? null,
     cashierConfirmed: true,
     cashierConfirmedAt: null,
     thankYou: 'Thank you for dining with us at Steakz!',

@@ -39,6 +39,12 @@ async function login(baseUrl, email, password, expectedRole) {
 }
 
 async function prepareDelivery(baseUrl, branch, tokens, menuItem, nonce) {
+  const driver = await expectStatus(baseUrl, 'POST', '/branch-manager/staff/drivers', tokens.manager, 201, {
+    name: `Branch Test Driver ${branch.id}`,
+    email: `branch-test-driver-${branch.id}-${nonce}@test.invalid`,
+    password: 'Password123!',
+  }, branch.id);
+  const driverToken = await login(baseUrl, driver.email, 'Password123!', 'DELIVERY_DRIVER');
   const order = await expectStatus(baseUrl, 'POST', '/customer/orders', tokens.customer, 201, {
     orderType: 'DELIVERY',
     branchId: branch.id,
@@ -48,16 +54,7 @@ async function prepareDelivery(baseUrl, branch, tokens, menuItem, nonce) {
     items: [{ menuItemId: menuItem.id, quantity: 1 }],
   });
   assert.equal(order.paymentStatus, 'UNPAID');
-
-  const driver = await expectStatus(baseUrl, 'POST', '/branch-manager/staff/drivers', tokens.manager, 201, {
-    name: `Branch Test Driver ${branch.id}`,
-    email: `branch-test-driver-${branch.id}-${nonce}@test.invalid`,
-    password: 'Password123!',
-  }, branch.id);
-  const driverToken = await login(baseUrl, driver.email, 'Password123!', 'DELIVERY_DRIVER');
-  await expectStatus(baseUrl, 'PATCH', `/delivery-management/orders/${order.id}/driver`, tokens.manager, 200, {
-    driverId: driver.id,
-  }, branch.id);
+  assert.equal(order.assignedDriverId, driver.id);
   return { order, driverToken };
 }
 

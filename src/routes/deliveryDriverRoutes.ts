@@ -38,6 +38,7 @@ const driverOrderSelect = {
   deliveredAt: true,
   branch: { select: { name: true, address: true } },
   assignedDriver: { select: { id: true, name: true } },
+  items: { select: { quantity: true, menuItem: { select: { name: true } } } },
 } as const;
 
 router.get('/profile', async (req: Request, res: Response) => {
@@ -133,7 +134,7 @@ router.patch('/orders/:id/delivered', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Assigned delivery not found.' });
     return;
   }
-  if (visibleOrder.status === 'DELIVERED' && visibleOrder.deliveryStatus === 'DELIVERED') {
+  if (visibleOrder.deliveryStatus === 'DELIVERED') {
     res.json(await prisma.order.findUnique({ where: { id }, select: driverOrderSelect }));
     return;
   }
@@ -151,13 +152,13 @@ router.patch('/orders/:id/delivered', async (req: Request, res: Response) => {
       status: 'DONE',
       deliveryStatus: 'OUT_FOR_DELIVERY',
     },
-    data: { deliveryStatus: 'DELIVERED', status: 'DELIVERED', deliveredAt: new Date() },
+    data: { deliveryStatus: 'DELIVERED', deliveredAt: new Date() },
   });
   if (updatedCount.count !== 1) {
     const currentOrder = await prisma.order.findFirst({
       where: { id, assignedDriverId: req.user!.id, branchId: req.user!.branchId!, orderType: 'DELIVERY' },
     });
-    if (currentOrder?.status === 'DELIVERED' && currentOrder.deliveryStatus === 'DELIVERED') {
+    if (currentOrder?.deliveryStatus === 'DELIVERED') {
       res.json(await prisma.order.findUnique({ where: { id }, select: driverOrderSelect }));
       return;
     }

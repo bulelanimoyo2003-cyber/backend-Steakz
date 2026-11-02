@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/axios';
 
@@ -8,21 +8,29 @@ export default function ReceiptPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function load() {
-      if (!orderId) return;
-      try {
-        const resp = await api.get(`/customer/receipt/${orderId}`);
-        setReceipt(resp.data);
-      } catch (e: any) {
-        const msg = e?.response?.data?.error ?? 'Failed to load receipt.';
-        setError(msg);
-      } finally {
-        setLoading(false);
-      }
+  const load = useCallback(async () => {
+    if (!orderId) return;
+    try {
+      const resp = await api.get(`/customer/receipt/${orderId}`);
+      setReceipt(resp.data);
+      setError('');
+    } catch (e: any) {
+      const msg = e?.response?.data?.error ?? 'Failed to load receipt.';
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
-    load();
   }, [orderId]);
+
+  useEffect(() => {
+    void load();
+    const interval = setInterval(() => void load(), 10000);
+    window.addEventListener('focus', load);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', load);
+    };
+  }, [load]);
 
   function handlePrint() {
     window.print();
@@ -33,7 +41,7 @@ export default function ReceiptPage() {
     window.print();
   }
 
-  if (loading) return <div className="page">Loading receipt…</div>;
+  if (loading && !receipt) return <div className="page">Loading receipt…</div>;
   if (error) return <div className="page"><div className="alert alert-error">{error}</div></div>;
   if (!receipt) return <div className="page"><div className="alert alert-error">Receipt unavailable.</div></div>;
 
@@ -90,6 +98,18 @@ export default function ReceiptPage() {
               <div><strong>Cashier confirmation:</strong> Confirmed{receipt.cashierConfirmedAt ? ` at ${new Date(receipt.cashierConfirmedAt).toLocaleString()}` : ''}</div>
             )}
           </div>
+
+          {receipt.orderType === 'DELIVERY' && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--surface-muted, #f7f5f2)', borderRadius: 6 }}>
+              <strong>Delivery progress:</strong>{' '}
+              {receipt.deliveryStatus === 'DELIVERED' ? 'Delivered'
+                : receipt.deliveryStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery'
+                  : receipt.deliveryStatus === 'ASSIGNED' ? 'Driver assigned'
+                    : 'Waiting for driver assignment'}
+              {receipt.assignedDriverName && <div>Driver: {receipt.assignedDriverName}</div>}
+              {receipt.deliveredAt && <div>Delivered at: {new Date(receipt.deliveredAt).toLocaleString()}</div>}
+            </div>
+          )}
 
           <div style={{ marginTop: '1.25rem', fontStyle: 'italic' }}>{receipt.thankYou}</div>
         </section>

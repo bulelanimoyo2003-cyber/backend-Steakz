@@ -28,6 +28,7 @@ interface Order {
   deliveryAddress?: string | null;
   deliveryInstructions?: string | null;
   assignedDriver?: { id: number; name: string } | null;
+  deliveredAt?: string | null;
   paymentStatus?: string;
   createdAt: string;
   branch: { name: string };
@@ -41,6 +42,9 @@ interface ReceiptSummary {
   dateTime: string;
   totalAmount: number;
   paymentStatus: string;
+  orderType: string;
+  deliveryStatus: string | null;
+  deliveredAt: string | null;
 }
 
 export default function CustomerDashboard() {
@@ -81,9 +85,11 @@ export default function CustomerDashboard() {
 
     fetchCustomerData();
     const refreshInterval = setInterval(fetchCustomerData, 10000);
+    window.addEventListener('focus', fetchCustomerData);
     return () => {
       mounted = false;
       clearInterval(refreshInterval);
+      window.removeEventListener('focus', fetchCustomerData);
     };
   }, [loadAttempt, user?.id]);
 
@@ -182,7 +188,9 @@ export default function CustomerDashboard() {
                   </p>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', alignItems: 'flex-end' }}>
-                  <span className={`badge badge-${order.status.toLowerCase()}`}>{order.status}</span>
+                  <span className={`badge badge-${(order.deliveryStatus === 'DELIVERED' ? 'done' : order.status).toLowerCase()}`}>
+                    Kitchen: {order.deliveryStatus === 'DELIVERED' ? 'DONE' : order.status}
+                  </span>
                   <span className={`badge ${order.paymentStatus === 'PAID' ? 'badge-success' : 'badge-warning'}`}>
                     {order.paymentStatus || 'UNPAID'}
                   </span>
@@ -195,11 +203,16 @@ export default function CustomerDashboard() {
               </ul>
               {order.orderType === 'DELIVERY' && (
                 <div className="customer-delivery-progress">
-                  <strong>Delivery: {order.deliveryStatus?.replaceAll('_', ' ') ?? 'Waiting for driver assignment'}</strong>
+                  <strong>Delivery: {order.deliveryStatus === 'ASSIGNED'
+                    ? (order.status === 'DONE' || order.status === 'DELIVERED' ? 'Ready for pickup' : 'Driver assigned — awaiting preparation')
+                    : order.deliveryStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery'
+                      : order.deliveryStatus === 'DELIVERED' ? 'Delivered'
+                        : 'Waiting for driver assignment'}</strong>
                   {order.recipientName && <div>Recipient: {order.recipientName} · {order.recipientPhone}</div>}
                   {order.deliveryAddress && <div>Address: {order.deliveryAddress}</div>}
                   {order.deliveryInstructions && <div>Instructions: {order.deliveryInstructions}</div>}
                   <div>Driver: {order.assignedDriver?.name ?? 'Not assigned yet'}</div>
+                  {order.deliveredAt && <div>Delivered at: {new Date(order.deliveredAt).toLocaleString()}</div>}
                 </div>
               )}
               <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -238,6 +251,7 @@ export default function CustomerDashboard() {
               <th>Date</th>
               <th>Total</th>
               <th>Status</th>
+              <th>Delivery</th>
               <th />
             </tr>
           </thead>
@@ -254,6 +268,12 @@ export default function CustomerDashboard() {
                     {receipt.paymentStatus}
                   </span>
                 </td>
+                <td>{receipt.orderType === 'DELIVERY'
+                  ? receipt.deliveryStatus === 'DELIVERED' ? `Delivered${receipt.deliveredAt ? ` · ${new Date(receipt.deliveredAt).toLocaleString()}` : ''}`
+                    : receipt.deliveryStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery'
+                      : receipt.deliveryStatus === 'ASSIGNED' ? 'Driver assigned'
+                        : 'Waiting for driver'
+                  : '—'}</td>
                 <td>
                   <Link className="btn btn-sm btn-primary" to={`/receipt/${receipt.orderId}`}>
                     Open Receipt

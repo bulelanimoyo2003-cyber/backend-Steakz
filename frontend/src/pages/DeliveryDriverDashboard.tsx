@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 
@@ -14,6 +14,7 @@ interface DeliveryOrder {
   pickedUpAt: string | null;
   deliveredAt: string | null;
   branch: { name: string; address: string };
+  items: { quantity: number; menuItem: { name: string } }[];
 }
 
 interface DriverProfile {
@@ -28,10 +29,12 @@ export default function DeliveryDriverDashboard() {
   const [profile, setProfile] = useState<DriverProfile | null>(null);
   const [orders, setOrders] = useState<DeliveryOrder[]>([]);
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [success, setSuccess] = useState('');
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     try {
       const [profileResponse, ordersResponse] = await Promise.all([
         api.get<DriverProfile>('/driver/profile'),
@@ -39,17 +42,24 @@ export default function DeliveryDriverDashboard() {
       ]);
       setProfile(profileResponse.data);
       setOrders(ordersResponse.data);
+      setLoadError('');
       setError('');
     } catch {
-      setError('Unable to load your driver profile and assigned deliveries.');
+      setLoadError('Unable to load your driver profile and assigned deliveries.');
+    } finally {
+      setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void loadOrders();
     const interval = setInterval(() => void loadOrders(), 10000);
-    return () => clearInterval(interval);
-  }, []);
+    window.addEventListener('focus', loadOrders);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', loadOrders);
+    };
+  }, [loadOrders]);
 
   async function updateDelivery(orderId: number, action: 'pickup' | 'delivered') {
     if (busyOrderId !== null) return;
@@ -70,10 +80,11 @@ export default function DeliveryDriverDashboard() {
     }
   }
 
-  const activeOrders = orders.filter((order) => order.deliveryStatus !== 'DELIVERED');
-  const historyOrders = orders.filter((order) => order.deliveryStatus === 'DELIVERED');
+  const activeOrders = orders.filter((order) => order.deliveryStatus !== 'DELIVERED' && order.status !== 'DELIVERED');
+  const historyOrders = orders.filter((order) => order.deliveryStatus === 'DELIVERED' || order.status === 'DELIVERED');
 
   function renderOrder(order: DeliveryOrder, history = false) {
+    const isDelivered = order.deliveryStatus === 'DELIVERED' || order.status === 'DELIVERED';
     return (
       <article className="driver-delivery-card" key={order.id}>
         <div className="driver-delivery-heading">
@@ -82,11 +93,15 @@ export default function DeliveryDriverDashboard() {
             <div className="driver-branch">{order.branch.name} · {order.branch.address}</div>
           </div>
           <div className="driver-statuses">
-            <span className={`badge badge-${(order.deliveryStatus === 'DELIVERED' ? 'DONE' : order.status).toLowerCase()}`}>
-              Kitchen: {order.deliveryStatus === 'DELIVERED' ? 'DONE' : order.status}
+            <span className={`badge badge-${(isDelivered ? 'done' : order.status).toLowerCase()}`}>
+              Kitchen: {isDelivered ? 'DONE' : order.status}
             </span>
             <span className={`badge badge-${(order.deliveryStatus ?? 'unassigned').toLowerCase()}`}>
-              {order.deliveryStatus?.replaceAll('_', ' ') ?? 'UNASSIGNED'}
+              {isDelivered ? 'Delivered'
+                : order.deliveryStatus === 'ASSIGNED'
+                ? (order.status === 'DONE' || order.status === 'DELIVERED' ? 'Ready for pickup' : 'Waiting for kitchen')
+                : order.deliveryStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery'
+                  : 'Waiting for driver assignment'}
             </span>
           </div>
         </div>
@@ -96,6 +111,9 @@ export default function DeliveryDriverDashboard() {
         </div>
         <div><strong>Delivery address</strong><p>{order.deliveryAddress}</p></div>
         {order.deliveryInstructions && <div><strong>Instructions</strong><p>{order.deliveryInstructions}</p></div>}
+        <div><strong>Items</strong>
+          <ul>{order.items.map((item, index) => <li key={`${order.id}-${index}`}>{item.menuItem.name} × {item.quantity}</li>)}</ul>
+        </div>
         <div className="driver-delivery-timestamps">
           {order.assignedAt && <span>Assigned {new Date(order.assignedAt).toLocaleString()}</span>}
           {order.pickedUpAt && <span>Picked up {new Date(order.pickedUpAt).toLocaleString()}</span>}
@@ -110,7 +128,7 @@ export default function DeliveryDriverDashboard() {
                 disabled={order.status !== 'DONE' || busyOrderId !== null}
                 onClick={() => void updateDelivery(order.id, 'pickup')}
               >
-                Picked up / Out for delivery
+                Collect order / Start delivery
               </button>
             )}
             {order.deliveryStatus === 'OUT_FOR_DELIVERY' && (
@@ -124,7 +142,7 @@ export default function DeliveryDriverDashboard() {
               </button>
             )}
             {order.deliveryStatus === 'ASSIGNED' && order.status !== 'DONE' && (
-              <span className="driver-waiting">Available after the kitchen marks the order DONE.</span>
+              <span className="driver-waiting">Waiting for kitchen — collection is available when preparation is DONE.</span>
             )}
           </div>
         )}
@@ -144,17 +162,25 @@ export default function DeliveryDriverDashboard() {
         </p>
       </header>
       {error && <div className="alert alert-error" role="alert">{error}</div>}
+      {loadError && (
+        <div className="alert alert-error" role="alert">
+          {loadError}{' '}
+          <button type="button" className="btn btn-sm" onClick={() => void loadOrders()}>Retry</button>
+        </div>
+      )}
       {success && <div className="alert alert-success" role="status">{success}</div>}
 
       <h2 className="section-title">Active deliveries</h2>
-      {activeOrders.length === 0 ? (
+      {loading ? (
+        <div role="status">Loading assigned deliveries…</div>
+      ) : loadError ? null : activeOrders.length === 0 ? (
         <div className="empty-state"><span>🚴</span>No active deliveries assigned.</div>
       ) : (
         <section className="driver-delivery-list">{activeOrders.map((order) => renderOrder(order))}</section>
       )}
 
       <h2 className="section-title">Delivery history</h2>
-      {historyOrders.length === 0 ? (
+      {loading || loadError ? null : historyOrders.length === 0 ? (
         <div className="empty-state"><span>📦</span>No completed deliveries yet.</div>
       ) : (
         <section className="driver-delivery-list">{historyOrders.map((order) => renderOrder(order, true))}</section>

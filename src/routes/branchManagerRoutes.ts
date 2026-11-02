@@ -80,17 +80,24 @@ router.post('/staff/drivers', async (req: Request, res: Response) => {
   }
 
   try {
-    const user = await prisma.user.create({
-      data: {
-        name: normalizedName,
-        email: normalizedEmail,
-        password: await bcrypt.hash(password, 10),
-        role: 'DELIVERY_DRIVER',
-        branchId: req.managerBranchId!,
-      },
-      select: { id: true, name: true, email: true, role: true, branchId: true, isActive: true },
+    const result = await prisma.$transaction(async (transaction) => {
+      const user = await transaction.user.create({
+        data: {
+          name: normalizedName,
+          email: normalizedEmail,
+          password: await bcrypt.hash(password, 10),
+          role: 'DELIVERY_DRIVER',
+          branchId: req.managerBranchId!,
+        },
+        select: { id: true, name: true, email: true, role: true, branchId: true, isActive: true },
+      });
+      const designation = await transaction.branch.updateMany({
+        where: { id: req.managerBranchId!, designatedDeliveryDriverId: null },
+        data: { designatedDeliveryDriverId: user.id },
+      });
+      return { user, isDesignated: designation.count === 1 };
     });
-    res.status(201).json(user);
+    res.status(201).json({ ...result.user, isDesignated: result.isDesignated });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       res.status(409).json({ error: 'Email already in use.' });
