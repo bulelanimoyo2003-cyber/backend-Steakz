@@ -25,7 +25,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-steakz.ps1
 
 The launcher verifies the root `.env` database path, refuses to create a missing database, checks that ports 3001 and 5173 are free, starts the root API and Vite frontend in separate PowerShell consoles, and verifies that the listeners belong to those launched processes. It clears inherited database/port overrides in the child consoles so the root `.env` is used. It never silently switches to another port if one is occupied. Open <http://127.0.0.1:5173>; check the API at <http://127.0.0.1:3001/api/health>. Leave both service consoles running while using the app.
 
-If a port is reported occupied, inspect the listed PID before stopping anything. Do not start the app on Vite's fallback port 5174; the supported URL is always `http://127.0.0.1:5173`.
+If the app is already running after reopening VS Code, open the URL above instead of starting a second copy. To restart it, press Ctrl+C in both service consoles and wait for ports 3001 and 5173 to be released, then rerun the launcher. If a port is reported occupied, inspect the listed PID before stopping anything. Do not start the app on Vite's fallback port 5174; the supported URL is always `http://127.0.0.1:5173`.
 
 For a fresh checkout only, copy `.env.example` to `.env` and configure a local SQLite URL before running migrations. Do not copy the example over an existing `.env` or use the nested PostgreSQL URL.
 
