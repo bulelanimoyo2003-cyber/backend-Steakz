@@ -50,7 +50,9 @@ npm.cmd run setup:presentation:passwords
 Remove-Item Env:STEAKZ_PRESENTATION_PASSWORD_UPDATE
 ```
 
-The driver setup creates or repairs only the four configured branch drivers, designates them for their corresponding active branches, and assigns only eligible, currently unassigned delivery orders. The password command updates only `customer@steakz.com` and those four presentation drivers; other account passwords remain untouched. Both commands load the root `.env` and refuse any database path except the persistent project database. They are never part of startup.
+The driver setup creates or repairs only the four configured branch drivers, designates them for their corresponding active branches, and assigns only eligible, currently unassigned delivery orders. The password command is a separate, one-time presentation operation: it bcrypt-hashes `1234` and updates every existing user account in the local database, across all roles, without changing emails, roles, active status, or branch assignments. It first verifies that the seven expected role types, four active branches, and four active branch-specific drivers exist. Back up the database before explicitly running it. Both commands load the root `.env` and refuse any database path except this checkout's persistent project database; they are never part of startup.
+
+On another local presentation checkout, first preserve that checkout's database and configure its root `.env` to the checkout's existing absolute `backend\prisma\dev.db` path. Run the password command from that checkout's root with `STEAKZ_PRESENTATION_PASSWORD_UPDATE=true` only when intentionally applying presentation credentials there. The command refuses production mode, missing required presentation records, and any other database path. Database accounts and password hashes are local data; Git push transfers code and the explicit setup procedure, not database changes.
 
 Delivery orders are automatically assigned to the active designated driver for the selected branch. The root SQLite Prisma schema and client implement this behavior; the nested PostgreSQL API is a separate application.
 

@@ -4,6 +4,7 @@ const {
   EXPECTED_BRANCHES,
 } = require('./setup_presentation_delivery_accounts.cjs');
 const {
+  REQUIRED_ROLES,
   assertPresentationAccounts,
   setPresentationPasswords,
 } = require('./set_presentation_passwords.cjs');
@@ -13,24 +14,25 @@ function fixtures() {
     id: index + 1,
     name: branch.name,
   }));
-  const users = [{
-    id: 1,
-    name: 'Sample Customer',
-    email: 'customer@steakz.com',
-    role: 'CUSTOMER',
+  const users = REQUIRED_ROLES.map((role, index) => ({
+    id: index + 1,
+    name: `${role} user`,
+    email: `${role.toLowerCase()}@presentation.test`,
+    role,
     isActive: true,
     branch: null,
-  }, {
-    id: 2,
-    name: 'Unrelated Account',
+  }));
+  users.push({
+    id: users.length + 1,
+    name: 'Additional Customer',
     email: 'friend@steakz.com',
     role: 'CUSTOMER',
     isActive: true,
     branch: null,
-  }];
+  });
   for (const [index, branch] of EXPECTED_BRANCHES.entries()) {
     users.push({
-      id: index + 3,
+      id: users.length + 1,
       name: branch.driverName,
       email: branch.email,
       role: 'DELIVERY_DRIVER',
@@ -41,7 +43,7 @@ function fixtures() {
   return { branches, users };
 }
 
-test('updates only the customer and four presentation driver passwords', async () => {
+test('updates every retained role and customer password without changing account data', async () => {
   const { branches, users } = fixtures();
   const calls = [];
   const transaction = {
@@ -50,7 +52,7 @@ test('updates only the customer and four presentation driver passwords', async (
       async findMany() { return users; },
       async updateMany(args) {
         calls.push(args);
-        return { count: 5 };
+        return { count: users.length };
       },
     },
   };
@@ -63,24 +65,35 @@ test('updates only the customer and four presentation driver passwords', async (
     },
   );
 
-  assert.equal(accounts.length, 5);
-  assert.deepEqual(accounts.map(({ id }) => id), [1, 3, 4, 5, 6]);
+  assert.equal(accounts.length, users.length);
+  assert.deepEqual(accounts.map(({ id }) => id), users.map(({ id }) => id));
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].data, { password: 'bcrypt-hash' });
-  assert.deepEqual(calls[0].where.id.in, [1, 3, 4, 5, 6]);
+  assert.deepEqual(calls[0].where.id.in, users.map(({ id }) => id));
   assert.ok(accounts.every((account) => !Object.hasOwn(account, 'password')));
 });
 
-test('refuses to proceed when a required presentation account is missing or inactive', () => {
+test('refuses to proceed when a required presentation role is missing', () => {
   const { branches, users } = fixtures();
   assert.throws(
-    () => assertPresentationAccounts(users.filter((user) => user.email !== 'customer@steakz.com'), branches),
-    /expected an active CUSTOMER account customer@steakz.com/,
+    () => assertPresentationAccounts(users.filter((user) => user.role !== 'CASHIER'), branches),
+    /required presentation roles are missing: CASHIER/,
   );
-  users[0].isActive = false;
+});
+
+test('refuses to proceed when an expected designated driver is missing, inactive, or misassigned', () => {
+  const { branches, users } = fixtures();
+  const driver = users.find((user) => user.email === EXPECTED_BRANCHES[0].email);
+  driver.isActive = false;
   assert.throws(
     () => assertPresentationAccounts(users, branches),
-    /expected an active CUSTOMER account customer@steakz.com/,
+    /expected an active delivery account .* for Steakz City Centre/,
+  );
+  driver.isActive = true;
+  driver.branch.name = 'Steakz Northside';
+  assert.throws(
+    () => assertPresentationAccounts(users, branches),
+    /expected an active delivery account .* for Steakz City Centre/,
   );
 });
 
@@ -89,14 +102,5 @@ test('refuses to proceed when active branches do not match presentation location
   assert.throws(
     () => assertPresentationAccounts(users, branches.slice(1)),
     /expected exactly the four active presentation branches/,
-  );
-});
-
-test('refuses to proceed when a delivery account has the wrong branch', () => {
-  const { branches, users } = fixtures();
-  users.find((user) => user.email === EXPECTED_BRANCHES[0].email).branch.name = 'Steakz Northside';
-  assert.throws(
-    () => assertPresentationAccounts(users, branches),
-    /expected an active DELIVERY_DRIVER account .* for Steakz City Centre/,
   );
 });

@@ -7,13 +7,14 @@ const {
 } = require('./setup_presentation_delivery_accounts.cjs');
 
 const PASSWORD = '1234';
-const PRESENTATION_ACCOUNTS = [
-  { email: 'customer@steakz.com', role: 'CUSTOMER', branch: null },
-  ...EXPECTED_BRANCHES.map(({ email, name }) => ({
-    email,
-    role: 'DELIVERY_DRIVER',
-    branch: name,
-  })),
+const REQUIRED_ROLES = [
+  'ADMIN',
+  'HQ_MANAGER',
+  'BRANCH_MANAGER',
+  'CHEF',
+  'CASHIER',
+  'CUSTOMER',
+  'DELIVERY_DRIVER',
 ];
 
 function assertPresentationAccounts(users, branches) {
@@ -24,17 +25,21 @@ function assertPresentationAccounts(users, branches) {
     throw new Error('Refusing to update passwords: expected exactly the four active presentation branches.');
   }
 
-  const usersByEmail = new Map(users.map((user) => [user.email, user]));
-  const accounts = [];
-  for (const expected of PRESENTATION_ACCOUNTS) {
-    const user = usersByEmail.get(expected.email);
-    if (!user || !user.isActive || user.role !== expected.role
-      || (expected.branch === null ? user.branch !== null : user.branch?.name !== expected.branch)) {
-      throw new Error(`Refusing to update passwords: expected an active ${expected.role} account ${expected.email}${expected.branch ? ` for ${expected.branch}` : ''}.`);
-    }
-    accounts.push(user);
+  const roles = new Set(users.map(({ role }) => role));
+  const missingRoles = REQUIRED_ROLES.filter((role) => !roles.has(role));
+  if (missingRoles.length) {
+    throw new Error(`Refusing to update passwords: required presentation roles are missing: ${missingRoles.join(', ')}.`);
   }
-  return accounts;
+
+  const usersByEmail = new Map(users.map((user) => [user.email, user]));
+  for (const expected of EXPECTED_BRANCHES) {
+    const user = usersByEmail.get(expected.email);
+    if (!user || !user.isActive || user.role !== 'DELIVERY_DRIVER'
+      || user.branch?.name !== expected.name) {
+      throw new Error(`Refusing to update passwords: expected an active delivery account ${expected.email} for ${expected.name}.`);
+    }
+  }
+  return users;
 }
 
 async function setPresentationPasswords(prisma, hashPassword) {
@@ -106,7 +111,7 @@ async function main() {
 }
 
 module.exports = {
-  PRESENTATION_ACCOUNTS,
+  REQUIRED_ROLES,
   assertPresentationAccounts,
   setPresentationPasswords,
 };

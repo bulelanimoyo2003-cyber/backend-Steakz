@@ -121,6 +121,15 @@ async function seedTestFixtures(prisma, bcrypt) {
       role: 'CUSTOMER',
     },
   });
+  const otherDriver = await prisma.user.create({
+    data: {
+      name: 'Unassigned Same Branch Driver',
+      email: 'other-driver@isolated.test',
+      password,
+      role: 'DELIVERY_DRIVER',
+      branchId: branches[0].id,
+    },
+  });
 
   const branchFixtures = [];
   for (const branch of branches) {
@@ -169,7 +178,7 @@ async function seedTestFixtures(prisma, bcrypt) {
   })));
   return {
     prisma, branches, admin, hqManager, manager, restrictedManager,
-    customer, otherCustomer, branchFixtures,
+    customer, otherCustomer, otherDriver, branchFixtures,
   };
 }
 
@@ -379,6 +388,14 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
       assert.equal(unchanged.status, kitchenPrepared ? 'DONE' : 'PENDING');
       assert.equal(unchanged.paymentStatus, paymentConfirmed ? 'PAID' : 'UNPAID');
     }
+    const refreshedDriverOrders = await api('/driver/orders', { token: driverToken });
+    const refreshedOrder = refreshedDriverOrders.data.find((order) => order.id === orderId);
+    assert.equal(refreshedOrder.status, kitchenPrepared ? 'DONE' : 'PENDING');
+    assert.equal(refreshedOrder.paymentStatus, paymentConfirmed ? 'PAID' : 'UNPAID');
+    assert.equal(refreshedOrder.deliveryStatus, pickupAttempt.status === 200
+      ? 'OUT_FOR_DELIVERY'
+      : 'ASSIGNED');
+
     const otherOrder = orders.find((target) => target.branch.id !== branch.id);
     const crossBranchRead = await api('/driver/orders', { token: driverToken });
     assert.ok(crossBranchRead.data.every((order) => order.branch.name === branch.name));
@@ -388,6 +405,18 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
     });
     assert.equal(crossBranchMutation.status, 404);
     crossBranchDriverDenials += 1;
+    if (index === 0) {
+      const otherDriverOrders = await api('/driver/orders', {
+        token: tokenFor(fixtures.otherDriver),
+      });
+      assert.equal(otherDriverOrders.status, 200);
+      assert.equal(otherDriverOrders.data.length, 0, 'same-branch non-assigned drivers cannot see the order');
+      const otherDriverMutation = await api(`/driver/orders/${orderId}/pickup`, {
+        method: 'PATCH',
+        token: tokenFor(fixtures.otherDriver),
+      });
+      assert.equal(otherDriverMutation.status, 404, 'same-branch non-assigned drivers cannot collect the order');
+    }
 
     const managerOrdersBeforeReady = await api('/branch-manager/orders', {
       token: managerToken,
