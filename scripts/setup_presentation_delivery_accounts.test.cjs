@@ -1,8 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('node:os');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const {
   EXPECTED_BRANCHES,
   ensurePresentationDeliveryAccounts,
+  getPresentationDatabasePath,
 } = require('./setup_presentation_delivery_accounts.cjs');
 
 function createMockPrisma(existingUsers = new Map(), pendingOrders = []) {
@@ -158,5 +162,13 @@ test('refuses to make accounts when any configured active branch is missing', as
   await assert.rejects(
     ensurePresentationDeliveryAccounts(prisma, async () => 'hash'),
     /four configured active branches/,
+  );
+});
+
+test('refuses to modify SQLite files outside the project presentation database', () => {
+  const otherDatabase = pathToFileURL(path.join(os.tmpdir(), 'steakz-other-database.db')).href;
+  assert.throws(
+    () => getPresentationDatabasePath(otherDatabase),
+    /Refusing to modify any database other than the configured project presentation database/,
   );
 });

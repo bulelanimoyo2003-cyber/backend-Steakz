@@ -1,9 +1,9 @@
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PASSWORD = '1234';
 const EXPECTED_BRANCHES = [
@@ -18,17 +18,9 @@ function getPresentationDatabasePath(databaseUrl) {
     throw new Error('DATABASE_URL must point to a local SQLite presentation database.');
   }
   const databasePath = path.resolve(fileURLToPath(databaseUrl));
-  const presentationDirectory = path.resolve(
-    os.homedir(),
-    'AppData',
-    'Local',
-    'Steakz',
-    'delivery-preview',
-  );
-  const relativePath = path.relative(presentationDirectory, databasePath);
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)
-    || !/^steakz-preview-\d{8}-\d{6}\.db$/i.test(path.basename(databasePath))) {
-    throw new Error('Refusing to modify a database outside the local Steakz delivery-preview presentation directory.');
+  const projectDatabasePath = path.resolve(__dirname, '..', 'backend', 'prisma', 'dev.db');
+  if (path.relative(projectDatabasePath, databasePath) !== '') {
+    throw new Error('Refusing to modify any database other than the configured project presentation database.');
   }
   if (!fs.existsSync(databasePath)) {
     throw new Error('The configured presentation database file does not exist.');

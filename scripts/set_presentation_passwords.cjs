@@ -7,14 +7,13 @@ const {
 } = require('./setup_presentation_delivery_accounts.cjs');
 
 const PASSWORD = '1234';
-const REQUIRED_ROLES = [
-  'ADMIN',
-  'HQ_MANAGER',
-  'BRANCH_MANAGER',
-  'CHEF',
-  'CASHIER',
-  'CUSTOMER',
-  'DELIVERY_DRIVER',
+const PRESENTATION_ACCOUNTS = [
+  { email: 'customer@steakz.com', role: 'CUSTOMER', branch: null },
+  ...EXPECTED_BRANCHES.map(({ email, name }) => ({
+    email,
+    role: 'DELIVERY_DRIVER',
+    branch: name,
+  })),
 ];
 
 function assertPresentationAccounts(users, branches) {
@@ -25,18 +24,17 @@ function assertPresentationAccounts(users, branches) {
     throw new Error('Refusing to update passwords: expected exactly the four active presentation branches.');
   }
 
-  const roles = new Set(users.map(({ role }) => role));
-  if (REQUIRED_ROLES.some((role) => !roles.has(role))) {
-    throw new Error('Refusing to update passwords: one or more required presentation roles are missing.');
-  }
-
   const usersByEmail = new Map(users.map((user) => [user.email, user]));
-  for (const expected of EXPECTED_BRANCHES) {
+  const accounts = [];
+  for (const expected of PRESENTATION_ACCOUNTS) {
     const user = usersByEmail.get(expected.email);
-    if (!user || user.role !== 'DELIVERY_DRIVER' || user.branch?.name !== expected.name) {
-      throw new Error(`Refusing to update passwords: expected delivery account ${expected.email} for ${expected.name}.`);
+    if (!user || !user.isActive || user.role !== expected.role
+      || (expected.branch === null ? user.branch !== null : user.branch?.name !== expected.branch)) {
+      throw new Error(`Refusing to update passwords: expected an active ${expected.role} account ${expected.email}${expected.branch ? ` for ${expected.branch}` : ''}.`);
     }
+    accounts.push(user);
   }
+  return accounts;
 }
 
 async function setPresentationPasswords(prisma, hashPassword) {
@@ -53,21 +51,23 @@ async function setPresentationPasswords(prisma, hashPassword) {
           name: true,
           email: true,
           role: true,
+          isActive: true,
           branch: { select: { name: true } },
         },
         orderBy: { id: 'asc' },
       }),
     ]);
 
-    assertPresentationAccounts(users, branches);
+    const accounts = assertPresentationAccounts(users, branches);
     const result = await transaction.user.updateMany({
-      where: { id: { in: users.map(({ id }) => id) } },
+      where: { id: { in: accounts.map(({ id }) => id) } },
       data: { password: passwordHash },
     });
-    if (result.count !== users.length) {
-      throw new Error(`Password update count mismatch: expected ${users.length}, updated ${result.count}.`);
+    if (result.count !== accounts.length) {
+      throw new Error(`Password update count mismatch: expected ${accounts.length}, updated ${result.count}.`);
     }
-    return users.map(({ name, email, role, branch }) => ({
+    return accounts.map(({ id, name, email, role, branch }) => ({
+      id,
       name,
       email,
       role,
@@ -106,7 +106,7 @@ async function main() {
 }
 
 module.exports = {
-  REQUIRED_ROLES,
+  PRESENTATION_ACCOUNTS,
   assertPresentationAccounts,
   setPresentationPasswords,
 };
