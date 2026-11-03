@@ -29,10 +29,19 @@ if (-not $databaseLine) {
 }
 
 $databaseUrl = ($databaseLine -replace '^\s*DATABASE_URL\s*=\s*', '').Trim().Trim('"').Trim("'")
-if ($databaseUrl -notmatch '^file:(?:/{0,3})([A-Za-z]:[/\\].+)$') {
-  throw 'The root .env DATABASE_URL must be an absolute local SQLite file path.'
+$databasePath = $null
+if ($databaseUrl -match '^file:(?:/{0,3})([A-Za-z]:[/\\].+)$') {
+  $databasePath = $Matches[1].Replace('/', '\')
+} elseif ($databaseUrl -match '^file:([^?]+)$') {
+  $relativePath = $Matches[1].Replace('/', '\')
+  if ([IO.Path]::IsPathRooted($relativePath)) {
+    throw 'The root .env DATABASE_URL must be a local SQLite file URL.'
+  }
+  $databasePath = Join-Path (Join-Path $root 'prisma') $relativePath
+} else {
+  throw 'The root .env DATABASE_URL must be a local SQLite file URL.'
 }
-$configuredDatabasePath = [IO.Path]::GetFullPath($Matches[1].Replace('/', '\'))
+$configuredDatabasePath = [IO.Path]::GetFullPath($databasePath)
 $expectedDatabasePath = [IO.Path]::GetFullPath((Join-Path $root 'backend\prisma\dev.db'))
 if (-not [string]::Equals($configuredDatabasePath, $expectedDatabasePath, [StringComparison]::OrdinalIgnoreCase)) {
   throw 'The root .env DATABASE_URL does not point to this project''s persistent presentation database; no services were started.'

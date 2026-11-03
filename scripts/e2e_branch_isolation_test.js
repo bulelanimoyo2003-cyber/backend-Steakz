@@ -139,16 +139,25 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
     assert.equal(booking.table.branchId, fixture.branch.id);
     bookings.push(booking);
   }
+  const dineInBooking = await expectStatus(baseUrl, 'POST', '/customer/bookings', customerToken, 201, {
+    tableId: fixtures[1].tables[1].id,
+    guestCount: 2,
+    date: new Date(Date.now() + 30 * 60_000).toISOString(),
+  });
+  await expectStatus(baseUrl, 'PATCH', `/branch-manager/bookings/${dineInBooking.id}/status`, managerToken, 200, {
+    status: 'CONFIRMED',
+  }, fixtures[1].branch.id);
   const mismatchedDineInOrder = await request(baseUrl, 'POST', '/customer/orders', {
     orderType: 'DINE_IN',
     branchId: fixtures[0].branch.id,
-    bookingId: bookings[1].id,
+    bookingId: dineInBooking.id,
     items: [{ menuItemId: fixtures[1].menuItem.id, quantity: 1 }],
   }, customerToken);
   assert.equal(mismatchedDineInOrder.status, 400, 'Dine-in location must match the reservation location.');
   const dineInOrder = await expectStatus(baseUrl, 'POST', '/customer/orders', customerToken, 201, {
     orderType: 'DINE_IN',
-    bookingId: bookings[1].id,
+    branchId: fixtures[1].branch.id,
+    bookingId: dineInBooking.id,
     items: [{ menuItemId: fixtures[1].menuItem.id, quantity: 1 }],
   });
   assert.equal(dineInOrder.branchId, fixtures[1].branch.id);

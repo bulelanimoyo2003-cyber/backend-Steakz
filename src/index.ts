@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { logger } from './middleware/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { getJwtSecret } from './middleware/auth.js';
 
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
@@ -18,6 +19,8 @@ import deliveryDriverRoutes from './routes/deliveryDriverRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
+
+getJwtSecret();
 
 function normalizeOrigin(origin: string | undefined) {
   return origin?.replace(/\/$/, '')?.trim();

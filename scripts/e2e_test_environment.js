@@ -36,6 +36,18 @@ function runMigrations(databaseUrl, env) {
   }
 }
 
+function seedIsolatedDatabase(databaseUrl, env) {
+  const result = spawnSync(process.execPath, [
+    '--import',
+    pathToFileURL(path.join(root, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href,
+    path.join(root, 'scripts', 'seed.ts'),
+  ], { cwd: root, env: { ...env, DATABASE_URL: databaseUrl }, encoding: 'utf8' });
+
+  if (result.error || result.status !== 0) {
+    throw new Error(`Isolated E2E database seeding failed.\n${result.stderr || result.error?.message || result.stdout}`);
+  }
+}
+
 function tail(lines) {
   return lines.join('').split(/\r?\n/).slice(-80).join('\n');
 }
@@ -112,6 +124,7 @@ export async function withIsolatedApi(run) {
 
   try {
     runMigrations(databaseUrl, env);
+    seedIsolatedDatabase(databaseUrl, env);
     child = spawn(process.execPath, [
       '--import',
       pathToFileURL(path.join(root, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href,

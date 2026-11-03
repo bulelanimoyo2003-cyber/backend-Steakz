@@ -2,7 +2,6 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole, requireManagerBranch } from '../middleware/auth.js';
-import { canAssignDelivery, canManageDeliveryOrder, isEligibleDeliveryDriver } from '../lib/deliveryWorkflow.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['ADMIN', 'HQ_MANAGER', 'BRANCH_MANAGER']), requireManagerBranch);
@@ -16,62 +15,49 @@ router.get('/drivers', async (req: Request, res: Response) => {
   res.json(drivers);
 });
 
-router.patch('/orders/:id/driver', async (req: Request, res: Response) => {
-  const orderId = Number(req.params.id);
+router.patch('/branches/:branchId/designated-driver', async (req: Request, res: Response) => {
+  const branchId = Number(req.params.branchId);
   const driverId = Number(req.body?.driverId);
-  if (!Number.isInteger(orderId) || orderId <= 0 || !Number.isInteger(driverId) || driverId <= 0) {
-    res.status(400).json({ error: 'A valid order id and driverId are required.' });
+  if (!Number.isInteger(branchId) || branchId <= 0
+    || !Number.isInteger(driverId) || driverId <= 0) {
+    res.status(400).json({ error: 'A valid branchId and driverId are required.' });
     return;
   }
-
-  const order = await prisma.order.findUnique({ where: { id: orderId } });
-  if (!order) {
-    res.status(404).json({ error: 'Order not found.' });
+  if (branchId !== req.managerBranchId) {
+    res.status(403).json({ error: 'You can only designate a delivery driver for the selected branch.' });
     return;
   }
-  const actor = { ...req.user!, branchId: req.managerBranchId! };
-  if (!canManageDeliveryOrder(actor, order) || order.branchId !== req.managerBranchId) {
-    res.status(403).json({ error: 'You cannot manage delivery orders for this branch.' });
-    return;
-  }
-  if (!canAssignDelivery(order)) {
-    res.status(409).json({ error: 'This delivery can no longer be assigned or reassigned.' });
-    return;
-  }
-
-  const driver = await prisma.user.findUnique({
-    where: { id: driverId },
-    select: { id: true, role: true, branchId: true, isActive: true },
+  const branch = await prisma.branch.findFirst({
+    where: { id: branchId, isActive: true },
+    select: { id: true },
   });
-  if (!driver || !isEligibleDeliveryDriver(driver, order)) {
-    res.status(400).json({ error: 'Choose an active delivery driver from the order branch.' });
+  if (!branch) {
+    res.status(404).json({ error: 'Active branch not found.' });
     return;
   }
-  const updated = await prisma.order.updateMany({
-    where: {
-      id: orderId,
-      branchId: req.managerBranchId,
-      assignedDriverId: order.assignedDriverId,
-      orderType: 'DELIVERY',
-      status: { notIn: ['CANCELLED', 'DELIVERED'] },
-      OR: [{ deliveryStatus: null }, { deliveryStatus: 'ASSIGNED' }],
-    },
-    data: {
-      assignedDriverId: driver.id,
-      deliveryStatus: 'ASSIGNED',
-      assignedAt: new Date(),
-      pickedUpAt: null,
-      deliveredAt: null,
-    },
+  const driver = await prisma.user.findFirst({
+    where: { id: driverId, role: 'DELIVERY_DRIVER', branchId, isActive: true },
+    select: { id: true },
   });
-  if (updated.count !== 1) {
-    res.status(409).json({ error: 'Delivery status changed; reload the order before assigning a driver.' });
+  if (!driver) {
+    res.status(400).json({ error: 'Choose an active delivery driver assigned to this branch.' });
     return;
   }
-  res.json(await prisma.order.findUnique({
-    where: { id: orderId },
-    include: { branch: { select: { id: true, name: true } }, assignedDriver: { select: { id: true, name: true } } },
-  }));
+  const result = await prisma.branch.updateMany({
+    where: { id: branchId, isActive: true },
+    data: { designatedDeliveryDriverId: driver.id },
+  });
+  if (result.count !== 1) {
+    res.status(409).json({ error: 'Branch designation changed; reload before trying again.' });
+    return;
+  }
+  res.json({ branchId, designatedDeliveryDriverId: driver.id });
+});
+
+router.patch('/orders/:id/driver', async (req: Request, res: Response) => {
+  res.status(409).json({
+    error: 'Order assignment is automatic. Update the designated driver for the selected branch instead.',
+  });
 });
 
 export default router;

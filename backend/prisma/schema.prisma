@@ -63,6 +63,8 @@ model Branch {
   phone         String?
   isActive      Boolean        @default(true)
   users         User[]
+  designatedDeliveryDriverId Int? @unique
+  designatedDeliveryDriver User? @relation("BranchDesignatedDeliveryDriver", fields: [designatedDeliveryDriverId], references: [id], onDelete: SetNull)
   managerAssignments BranchManagerAssignment[]
   tables        Table[]
   menuItems     MenuItem[]
@@ -85,6 +87,7 @@ model User {
   bookings  Booking[]
   orders    Order[]
   assignedDeliveries Order[] @relation("AssignedDeliveryDriver")
+  designatedForDeliveryBranch Branch? @relation("BranchDesignatedDeliveryDriver")
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 }
@@ -151,6 +154,7 @@ model Order {
   branchId   Int
   status     OrderStatus @default(PENDING)
   paymentStatus PaymentStatus @default(UNPAID)
+  paidAt     DateTime?
   orderType OrderType @default(DINE_IN)
   checkoutRequestId String? @unique
   recipientName String?
@@ -167,6 +171,9 @@ model Order {
   items      OrderItem[]
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
+
+  @@index([assignedDriverId, deliveryStatus])
+  @@index([branchId, orderType, deliveryStatus])
 }
 
 model OrderItem {

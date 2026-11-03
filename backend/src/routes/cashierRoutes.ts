@@ -153,7 +153,20 @@ router.patch('/orders/:id/pay', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Order not found in your branch.' });
       return;
     }
-    const updated = await prisma.order.update({ where: { id }, data: { paymentStatus: 'PAID' } });
+    const paidAt = new Date();
+    const updatedCount = await prisma.order.updateMany({
+      where: { id, branchId, paymentStatus: 'UNPAID' },
+      data: { paymentStatus: 'PAID', paidAt },
+    });
+    const updated = await prisma.order.findUnique({ where: { id } });
+    if (!updated) {
+      res.status(404).json({ error: 'Order not found.' });
+      return;
+    }
+    if (updatedCount.count === 0 && updated.paymentStatus !== 'PAID') {
+      res.status(409).json({ error: 'Order payment status changed; reload before trying again.' });
+      return;
+    }
     await completeBookingIfOrderPaidAndDelivered(updated.id);
     res.json(updated);
   } catch (error) {

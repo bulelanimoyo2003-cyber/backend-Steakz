@@ -696,7 +696,13 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
   assert.equal(receipt.data.assignedDriverName, orders[0].driver.name);
   assert.ok(receipt.data.deliveredAt);
 
-  const hqOrders = await api('/hq/orders', { token: tokenFor(fixtures.hqManager) });
+  const hqLogin = await api('/auth/login', {
+    method: 'POST',
+    body: { email: fixtures.hqManager.email, password: 'Isolated-Test-1234!' },
+  });
+  assert.equal(hqLogin.status, 200);
+  assert.equal(hqLogin.data.user.role, 'HQ_MANAGER');
+  const hqOrders = await api('/hq/orders', { token: hqLogin.data.token });
   assert.equal(hqOrders.status, 200);
   assert.ok(orders.every(({ orderId }) => hqOrders.data.some((order) => order.id === orderId)));
   const customerOrders = await api('/customer/orders', { token: customerToken });

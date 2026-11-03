@@ -2,14 +2,13 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { createRequire } from 'node:module';
 import bcrypt from 'bcryptjs';
-import jwt, { type Secret } from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
-import { verifyToken } from '../middleware/auth.js';
+import { getJwtSecret, verifyToken } from '../middleware/auth.js';
 
 const require = createRequire(import.meta.url);
 const { Prisma } = require('../generated/prisma/index.js') as typeof import('../generated/prisma/index.js');
 const router = Router();
-const JWT_SECRET: Secret = process.env.JWT_SECRET ?? 'dev-secret';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? '7d';
 
 router.post('/register', async (req: Request, res: Response) => {
@@ -43,22 +42,11 @@ router.post('/register', async (req: Request, res: Response) => {
   }
 });
 
-// OPTIONS preflight for login (explicitly return CORS headers if needed)
-router.options('/login', (req: Request, res: Response) => {
-  const origin = process.env.FRONTEND_URL ?? 'https://steak-frontend-dx21.onrender.com';
-  res.header('Access-Control-Allow-Origin', origin);
-  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.sendStatus(204);
-});
-
 router.post('/login', async (req: Request, res: Response) => {
-  console.log('[Auth] POST /login hit');
   try {
     const { email, password } = req.body as { email?: string; password?: string };
 
     if (!email || !password) {
-      console.warn('[Auth] Missing email or password');
       res.status(400).json({ error: 'email and password are required.' });
       return;
     }
@@ -66,25 +54,22 @@ router.post('/login', async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
 
     if (!user || !user.isActive) {
-      console.warn('[Auth] Invalid credentials or inactive account for', email);
       res.status(401).json({ error: 'Invalid credentials or account is inactive.' });
       return;
     }
 
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
-      console.warn('[Auth] Password mismatch for', email);
       res.status(401).json({ error: 'Invalid credentials or account is inactive.' });
       return;
     }
 
     const token = jwt.sign(
       { id: user.id, role: user.role, branchId: user.branchId },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: JWT_EXPIRES_IN as unknown as jwt.SignOptions['expiresIn'] }
     );
 
-    console.log('[Auth] Login success for', email);
     res.json({
       token,
       user: {

@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { logger } from './middleware/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { getDatabaseUrl, getJwtSecret } from './middleware/auth.js';
 
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
@@ -18,9 +19,11 @@ import deliveryManagementRoutes from './routes/deliveryManagementRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
+getDatabaseUrl();
+getJwtSecret();
 
-function normalizeOrigin(o: string | undefined) {
-  return o?.replace(/\/$/, '')?.trim();
+function normalizeOrigin(origin: string | undefined) {
+  return origin?.trim().replace(/\/+$/, '');
 }
 
 const allowedOrigins = [
@@ -32,14 +35,13 @@ const allowedOrigins = [
       'http://localhost:5174',
       'http://127.0.0.1:5174',
     ]),
-  'https://steak-frontend-dx21.onrender.com',
+  ...(process.env.NODE_ENV === 'production' ? ['https://steak-frontend-dx21.onrender.com'] : []),
   normalizeOrigin(process.env.FRONTEND_URL),
 ].filter(Boolean) as string[];
 
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     const incoming = normalizeOrigin(origin);
-    console.log('[CORS] Origin:', incoming);
     // Allow requests with no origin (e.g. server-to-server, curl)
     if (!incoming) return callback(null, true);
     if (allowedOrigins.includes(incoming)) return callback(null, true);
@@ -53,13 +55,6 @@ const corsOptions = {
 if (!process.env.FRONTEND_URL) {
   console.warn('[Backend] FRONTEND_URL is not set. CORS will allow localhost origins.');
 }
-if (!process.env.JWT_SECRET) {
-  console.warn('[Backend] JWT_SECRET is not set. Using default dev secret.');
-}
-if (!process.env.DATABASE_URL) {
-  console.warn('[Backend] DATABASE_URL is not set.');
-}
-
 app.use(cors(corsOptions));
 
 app.use(express.json());

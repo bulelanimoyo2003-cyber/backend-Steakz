@@ -4,7 +4,8 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { createVerifyToken, requireRole } from './auth.js';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret';
+const JWT_SECRET = process.env.JWT_SECRET ?? 'steakz-unit-test-secret-only';
+if (!process.env.JWT_SECRET) process.env.JWT_SECRET = JWT_SECRET;
 
 interface MiddlewareResult {
   statusCode?: number;
@@ -119,4 +120,17 @@ test('database errors are forwarded instead of authenticating', async () => {
   assert.equal(result.nextCalled, true);
   assert.equal(result.nextError, databaseError);
   assert.equal(result.user, undefined);
+});
+
+test('authentication fails closed when JWT_SECRET is not configured', async () => {
+  const configuredSecret = process.env.JWT_SECRET;
+  delete process.env.JWT_SECRET;
+  try {
+    await assert.rejects(
+      runMiddleware([createVerifyToken(async () => null)], 'Bearer token'),
+      /JWT_SECRET must be configured/,
+    );
+  } finally {
+    if (configuredSecret !== undefined) process.env.JWT_SECRET = configuredSecret;
+  }
 });

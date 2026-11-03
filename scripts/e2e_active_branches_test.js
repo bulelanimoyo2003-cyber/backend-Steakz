@@ -187,6 +187,7 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
 
     const rejectedDineInOrder = await request(baseUrl, 'POST', '/customer/orders', {
       orderType: 'DINE_IN',
+      branchId: branch.id,
       bookingId: booking.id,
       items: [{ menuItemId: menuItem.id, quantity: 1 }],
     }, customer);
@@ -211,10 +212,14 @@ await withIsolatedApi(async (baseUrl, databasePath) => {
     const booking = await expectStatus(baseUrl, 'POST', '/customer/bookings', customer, 201, {
       tableId: details.tables[0].id,
       guestCount: 2,
-      date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000 + branch.id * 60_000).toISOString(),
+      date: new Date(Date.now() + 30 * 60_000 + branch.id * 60_000).toISOString(),
     });
+    await expectStatus(baseUrl, 'PATCH', `/branch-manager/bookings/${booking.id}/status`, tokens.manager, 200, {
+      status: 'CONFIRMED',
+    }, branch.id);
     const dineIn = await expectStatus(baseUrl, 'POST', '/customer/orders', customer, 201, {
       orderType: 'DINE_IN',
+      branchId: branch.id,
       bookingId: booking.id,
       items: [{ menuItemId: menu[0].id, quantity: 1 }],
     });

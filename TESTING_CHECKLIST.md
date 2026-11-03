@@ -1,71 +1,75 @@
-# Steakz Testing Checklist
+# Steakz testing checklist
 
-## Setup
-- [ ] Confirm `.env` is created from `.env.example` with valid values.
-- [ ] Confirm PostgreSQL database is available and `DATABASE_URL` is correct.
-- [ ] Run `npm install` in both `backend/` and `frontend/`.
-- [ ] Run `npm run build` in both `backend/` and `frontend/` successfully.
+## Local presentation setup
 
-## Backend
-- [ ] Start backend dev server with `npm run dev`.
-- [ ] Verify `backend/src/lib/seed.ts` seed runs without errors.
-- [ ] Confirm API responds on `http://localhost:3001/api/public/menu`.
-- [ ] Confirm auth login returns JWT for valid credentials.
-- [ ] Confirm role-protected endpoints reject unauthorized access.
-- [ ] Confirm admin routes require `ADMIN` role and can manage users and locations.
+- [ ] Use the repository root as the working directory.
+- [ ] Configure the root `.env` for SQLite at this checkout's `backend\prisma\dev.db` and set a private `JWT_SECRET`.
+- [ ] Run the local SQLite API from the root and the Vite frontend from `frontend/`; do not start the separate PostgreSQL app in `backend/`.
+- [ ] Check `http://127.0.0.1:3001/api/health` and `http://127.0.0.1:5173`.
+- [ ] Back up the project database before intentionally changing presentation records. Follow [LOCAL_DEVELOPMENT.md](./LOCAL_DEVELOPMENT.md).
 
-## Isolated Automated Tests
-- [ ] Run `npm test` for backend unit tests.
-- [ ] Confirm the only active customer locations are City Centre (ID 1), Northside (ID 2), Southgate (ID 3), and Uptown (ID 7).
-- [ ] Run `npm run test:e2e:delivery` for the complete delivery workflow at all four active branches.
-- [ ] Run `npm run test:e2e:branches` to verify the exact active-location list, inactive-branch order/reservation rejection, and retained order management.
-- [ ] Run `npm run test:e2e:manager` to verify the selected manager's four assignments, branch-scoped operations, and combined sales.
-- [ ] Run `npm run test:e2e:isolation` to verify all 12 directed cross-branch combinations plus kitchen, cashier, reservation, receipt, customer, manager, and delivery isolation.
-- [ ] HTTP test scripts under `scripts/` and `backend/scripts/` use a temporary SQLite database, migrate and seed that database, then remove it on exit.
-- [ ] Do not point automated test scripts at the running application or its normal `DATABASE_URL`.
+## Build and automated tests
 
-## Frontend
-- [ ] Verify the landing page renders correctly.
-- [ ] Verify login and registration pages function and redirect after auth.
-- [ ] Verify menu page loads menu items from the API.
-- [ ] Verify branches page loads branch data from the API.
-- [ ] Verify 404 page appears for unknown routes.
+From the project root:
 
-## Authentication and Roles
-- [ ] Test logging in as `CUSTOMER` and accessing `/customer` and `/book`.
-- [ ] Test logging in as `CHEF` and accessing `/chef` only.
-- [ ] Test logging in as `CASHIER` and accessing `/cashier` only.
-- [ ] Test logging in as `BRANCH_MANAGER` and accessing `/branch-manager` only.
-- [ ] Verify a multi-branch manager can switch between assigned branches and see accurate all-location totals without mixing records.
-- [ ] Test logging in as `HQ_MANAGER` and accessing `/hq` only.
-- [ ] Test logging in as `ADMIN` and accessing `/admin` only.
-- [ ] Test logging in as `DELIVERY_DRIVER` and accessing assigned deliveries only.
-- [ ] Confirm unauthorized users are redirected to `/login`.
-- [ ] Confirm disabled users cannot log in.
+```powershell
+npm.cmd test
+npm.cmd run build
+Set-Location frontend
+npm.cmd run build
+Set-Location ..
+```
 
-## Admin Features
-- [ ] Create a new user from the admin dashboard.
-- [ ] Create a new branch location from the admin dashboard.
-- [ ] Update a user role from the admin dashboard.
-- [ ] Enable and disable a user account from the admin dashboard.
-- [ ] Delete a user from the admin dashboard.
+The backend workflow tests use isolated temporary SQLite databases. The delivery workflow test is explicitly guarded:
 
-## Workflow Tests
-- [ ] Customer can book a table from the booking page.
-- [ ] Branch manager can view bookings and branch reports.
-- [ ] Chef can view and update order status.
-- [ ] Cashier can view settled orders and process payments.
-- [ ] Branch manager assigns a same-branch driver to a delivery order.
-- [ ] Chef prepares the delivery before the assigned driver can collect it.
-- [ ] Driver advances the order to out-for-delivery and delivered; delivery alone does not mark it paid.
-- [ ] Customer sees delivery progress and cannot access another customer's orders.
-- [ ] Drivers and branch staff cannot access orders outside their assigned branch or driver scope.
-- [ ] HQ manager can view branch summaries and sales data.
+```powershell
+$env:STEAKZ_TEST_DATABASE = 'true'
+npm.cmd run test:e2e:delivery:sqlite
+Remove-Item Env:STEAKZ_TEST_DATABASE
+```
 
-## Regression and Edge Cases
-- [ ] Confirm menu page still loads after auth state changes.
-- [ ] Confirm app does not crash when API returns errors.
-- [ ] Confirm protected routes block all unauthorized access.
-- [ ] Confirm data updates refresh on create/edit actions.
-- [ ] Confirm the app handles missing branch or user data gracefully.
-- [ ] Confirm switching locations asks before clearing the cart and stale menu responses cannot replace the selected location's menu.
+Other root end-to-end scripts use the isolated API test harness:
+
+```powershell
+npm.cmd run test:e2e:branches
+npm.cmd run test:e2e:manager
+npm.cmd run test:e2e:isolation
+```
+
+Do not set test `DATABASE_URL` values to the presentation database. Do not run `npm run db:seed` against the presentation database; seeding is only for deliberately fresh databases.
+
+## Authentication and roles
+
+- [ ] Register a new customer and sign in; confirm the role is `CUSTOMER`.
+- [ ] Verify `ADMIN` and `HQ_MANAGER` can access only their authorized administrative/overview routes.
+- [ ] Verify `BRANCH_MANAGER` can select an assigned branch, see the all-assigned-locations summary, and cannot access an unassigned branch.
+- [ ] Verify `CHEF` and `CASHIER` only access their assigned branch's orders.
+- [ ] Verify `DELIVERY_DRIVER` only sees orders assigned to that driver.
+- [ ] Verify a disabled account cannot sign in and a deleted/inactive account's old JWT is rejected.
+- [ ] Verify changing a user's database role or branch takes effect on the next authenticated request.
+
+## Branches, menu, and persistence
+
+- [ ] Confirm the public location list contains only City Centre, Northside, Southgate, and Uptown.
+- [ ] Confirm inactive branches and their historical records remain retained.
+- [ ] Confirm menus load for each active branch and contain that branch's items.
+- [ ] Confirm the shared branch manager is assigned to all four active locations.
+- [ ] Restart the root API and verify accounts, orders, assignments, and menu data remain in the same SQLite database.
+
+## Ordering, booking, payment, and delivery
+
+- [ ] Reject dine-in checkout without a booking, with another customer's booking, with a different branch's booking, and with an unconfirmed/expired booking.
+- [ ] Accept an eligible confirmed booking that belongs to the customer and selected branch.
+- [ ] Accept collection and delivery checkout without a booking.
+- [ ] Confirm delivery orders are assigned to the designated active driver for their selected branch and that assignment persists.
+- [ ] Confirm pickup is rejected until both the kitchen marks the order done and the cashier marks it paid.
+- [ ] Confirm the assigned driver can collect and mark the order delivered, but cannot mark it delivered before pickup.
+- [ ] Confirm delivery does not change payment status and the customer dashboard shows delivery progress.
+- [ ] Confirm dashboards refresh order status without mixing branches or customers.
+
+## Manual frontend demonstration
+
+- [ ] Verify login, registration, menus, branches, booking, customer dashboard, and each staff dashboard.
+- [ ] Refresh a nested route directly and confirm it returns the intended page rather than a 404.
+- [ ] Check browser console/network errors and verify the frontend API requests use the local Vite proxy.
+- [ ] Demonstrate the branch manager's all-location view and switch to a single assigned branch.

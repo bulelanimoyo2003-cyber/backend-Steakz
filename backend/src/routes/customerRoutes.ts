@@ -4,11 +4,15 @@ import { createRequire } from 'node:module';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
 import { isSameCheckoutRequest, type CheckoutSnapshot } from '../lib/orderIdempotency.js';
+import { getDineInBookingWindow, isDineInBookingEligible } from '../lib/dineInBooking.js';
 
 const require = createRequire(import.meta.url);
 const { Prisma } = require('../generated/prisma/index.js') as typeof import('../generated/prisma/index.js');
 const router = Router();
 router.use(verifyToken, requireRole(['CUSTOMER']));
+
+class DeliveryUnavailableError extends Error {}
+class DineInBookingUnavailableError extends Error {}
 
 router.get('/bookings', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
@@ -18,6 +22,30 @@ router.get('/bookings', async (req: Request, res: Response) => {
     orderBy: { date: 'desc' },
   });
   res.json(bookings);
+});
+
+router.get('/bookings/eligible', async (req: Request, res: Response) => {
+  const branchId = Number(req.query.branchId);
+  if (!Number.isInteger(branchId) || branchId <= 0) {
+    res.status(400).json({ error: 'A valid branchId is required.' });
+    return;
+  }
+  const now = Date.now();
+  const window = getDineInBookingWindow();
+  const bookings = await prisma.booking.findMany({
+    where: {
+      customerId: req.user!.id,
+      status: 'CONFIRMED',
+      date: {
+        gte: new Date(now - window.visitDurationMinutes * 60_000),
+        lte: new Date(now + window.earlyWindowMinutes * 60_000),
+      },
+      table: { branchId, branch: { isActive: true } },
+    },
+    include: { table: { include: { branch: { select: { name: true } } } } },
+    orderBy: { date: 'asc' },
+  });
+  res.json(bookings.filter((booking) => isDineInBookingEligible(booking, now, window)));
 });
 
 router.post('/bookings', async (req: Request, res: Response) => {
@@ -179,12 +207,20 @@ router.post('/orders', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Booking not found.' });
       return;
     }
-    if (requestedBranchId !== undefined && requestedBranchId !== booking.table.branchId) {
+    if (!Number.isInteger(requestedBranchId) || !requestedBranchId || requestedBranchId <= 0) {
+      res.status(400).json({ error: 'A valid branchId is required for dine-in orders.' });
+      return;
+    }
+    if (requestedBranchId !== booking.table.branchId) {
       res.status(400).json({ error: 'Dine-in orders must use the location assigned to the reservation.' });
       return;
     }
     if (!booking.table.branch.isActive) {
       res.status(400).json({ error: 'This location is no longer active. Please select an active location.' });
+      return;
+    }
+    if (!isDineInBookingEligible(booking)) {
+      res.status(409).json({ error: 'Dine-in orders require a confirmed booking within its dining window.' });
       return;
     }
     bookingId = requestedBookingId;
@@ -194,7 +230,14 @@ router.post('/orders', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'A valid branchId is required for collection and delivery orders.' });
       return;
     }
-    const branch = await prisma.branch.findUnique({ where: { id: requestedBranchId } });
+    const branch = await prisma.branch.findUnique({
+      where: { id: requestedBranchId },
+      include: {
+        designatedDeliveryDriver: {
+          select: { id: true, role: true, branchId: true, isActive: true },
+        },
+      },
+    });
     if (!branch || !branch.isActive) {
       res.status(400).json({ error: 'This location is no longer active. Please select an active location.' });
       return;
@@ -263,7 +306,10 @@ router.post('/orders', async (req: Request, res: Response) => {
   const findExistingCheckout = () => checkoutRequestId
     ? prisma.order.findUnique({
       where: { checkoutRequestId },
-      include: { items: { include: { menuItem: true } } },
+      include: {
+        items: { include: { menuItem: true } },
+        assignedDriver: { select: { id: true, name: true } },
+      },
     })
     : null;
   const existingOrder = await findExistingCheckout();
@@ -281,27 +327,80 @@ router.post('/orders', async (req: Request, res: Response) => {
   }
 
   try {
-    const order = await prisma.order.create({
-      data: {
-        customerId,
-        bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
-        branchId: resolvedBranchId,
-        orderType,
-        checkoutRequestId,
-        ...deliveryDetails,
-        total,
-        items: {
-          create: items.map((item) => ({
-            menuItemId: item.menuItemId,
-            quantity: item.quantity,
-            unitPrice: priceMap[item.menuItemId] ?? 0,
-          })),
+    const order = await prisma.$transaction(async (transaction) => {
+      if (orderType === 'DINE_IN') {
+        const currentBooking = await transaction.booking.findFirst({
+          where: {
+            id: bookingId,
+            customerId,
+            table: { branchId: resolvedBranchId, branch: { isActive: true } },
+          },
+          select: { status: true, date: true },
+        });
+        if (!currentBooking || !isDineInBookingEligible(currentBooking)) {
+          throw new DineInBookingUnavailableError();
+        }
+      }
+
+      const branch = orderType === 'DELIVERY'
+        ? await transaction.branch.findUnique({
+          where: { id: resolvedBranchId },
+          select: {
+            isActive: true,
+            designatedDeliveryDriver: {
+              select: { id: true, role: true, branchId: true, isActive: true },
+            },
+          },
+        })
+        : null;
+      const driver = branch?.designatedDeliveryDriver;
+      if (orderType === 'DELIVERY' && (!branch?.isActive || !driver || !driver.isActive
+        || driver.role !== 'DELIVERY_DRIVER' || driver.branchId !== resolvedBranchId)) {
+        throw new DeliveryUnavailableError();
+      }
+
+      return transaction.order.create({
+        data: {
+          customerId,
+          bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
+          branchId: resolvedBranchId,
+          orderType,
+          checkoutRequestId,
+          ...(orderType === 'DELIVERY'
+            ? {
+              assignedDriverId: driver!.id,
+              deliveryStatus: 'ASSIGNED' as const,
+              assignedAt: new Date(),
+            }
+            : {}),
+          ...deliveryDetails,
+          total,
+          items: {
+            create: items.map((item) => ({
+              menuItemId: item.menuItemId,
+              quantity: item.quantity,
+              unitPrice: priceMap[item.menuItemId] ?? 0,
+            })),
+          },
         },
-      },
-      include: { items: { include: { menuItem: true } } },
+        include: {
+          items: { include: { menuItem: true } },
+          assignedDriver: { select: { id: true, name: true } },
+        },
+      });
     });
     res.status(201).json(order);
   } catch (error) {
+    if (error instanceof DineInBookingUnavailableError) {
+      res.status(409).json({ error: 'Dine-in orders require a confirmed booking within its dining window.' });
+      return;
+    }
+    if (error instanceof DeliveryUnavailableError) {
+      res.status(409).json({
+        error: 'Delivery is unavailable at this location because no eligible delivery driver is designated.',
+      });
+      return;
+    }
     if (checkoutRequestId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const concurrentOrder = await findExistingCheckout();
       if (concurrentOrder?.customerId === customerId
@@ -338,10 +437,14 @@ function buildReceiptPayload(order: any) {
     })),
     totalAmount: order.total,
     paymentStatus: 'PAID',
-    // Cashier confirmation metadata: we don't change payment workflow — when cashier marks order PAID,
-    // the order's `updatedAt` reflects confirmation time. Expose a flag + timestamp for the receipt.
+    // Historical records remain without a paidAt timestamp because their original payment time is unknown.
     cashierConfirmed: order.paymentStatus === 'PAID',
-    cashierConfirmedAt: order.updatedAt ? new Date(order.updatedAt).toISOString() : null,
+    cashierConfirmedAt: order.paidAt?.toISOString() ?? null,
+    orderType: order.orderType,
+    deliveryStatus: order.deliveryStatus,
+    assignedDriverName: order.assignedDriver?.name ?? null,
+    pickedUpAt: order.pickedUpAt?.toISOString() ?? null,
+    deliveredAt: order.deliveredAt?.toISOString() ?? null,
     thankYou: 'Thank you for dining with us at Steakz!',
   };
 }
@@ -350,7 +453,7 @@ router.get('/receipts', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
   const paidOrders = await prisma.order.findMany({
     where: { customerId, paymentStatus: 'PAID' },
-    include: { branch: { select: { name: true } } },
+    include: { branch: { select: { name: true } }, assignedDriver: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -361,6 +464,10 @@ router.get('/receipts', async (req: Request, res: Response) => {
     dateTime: order.createdAt.toISOString(),
     totalAmount: order.total,
     paymentStatus: order.paymentStatus,
+    orderType: order.orderType,
+    deliveryStatus: order.deliveryStatus,
+    assignedDriverName: order.assignedDriver?.name ?? null,
+    deliveredAt: order.deliveredAt?.toISOString() ?? null,
   }));
 
   res.json(receipts);
@@ -377,7 +484,12 @@ router.get('/receipt/:orderId', async (req: Request, res: Response) => {
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: { include: { menuItem: true } }, customer: true, branch: true },
+      include: {
+        items: { include: { menuItem: true } },
+        customer: true,
+        branch: true,
+        assignedDriver: { select: { name: true } },
+      },
     }) as any;
 
     if (!order) {

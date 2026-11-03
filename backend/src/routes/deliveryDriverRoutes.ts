@@ -26,6 +26,7 @@ router.use(async (req: Request, res: Response, next) => {
 const driverOrderSelect = {
   id: true,
   status: true,
+  paymentStatus: true,
   orderType: true,
   deliveryStatus: true,
   assignedDriverId: true,
@@ -38,7 +39,25 @@ const driverOrderSelect = {
   deliveredAt: true,
   branch: { select: { name: true, address: true } },
   assignedDriver: { select: { id: true, name: true } },
+  items: { select: { quantity: true, menuItem: { select: { name: true } } } },
 } as const;
+
+router.get('/profile', async (req: Request, res: Response) => {
+  const driver = await prisma.user.findUnique({
+    where: { id: req.user!.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      branch: { select: { id: true, name: true, address: true } },
+    },
+  });
+  if (!driver?.branch) {
+    res.status(403).json({ error: 'This delivery driver has no assigned restaurant branch.' });
+    return;
+  }
+  res.json(driver);
+});
 
 router.get('/orders', async (req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
@@ -50,7 +69,7 @@ router.get('/orders', async (req: Request, res: Response) => {
     select: driverOrderSelect,
     orderBy: [{ deliveryStatus: 'asc' }, { assignedAt: 'desc' }],
   });
-  res.json(orders);
+  res.set('Cache-Control', 'no-store').json(orders);
 });
 
 router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
@@ -65,12 +84,21 @@ router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Assigned delivery not found.' });
     return;
   }
+  if (order.deliveryStatus === 'OUT_FOR_DELIVERY' && order.status === 'DONE') {
+    res.json(await prisma.order.findUnique({ where: { id }, select: driverOrderSelect }));
+    return;
+  }
   if (!canPickUpDelivery(order)) {
-    res.status(409).json({ error: 'Only assigned deliveries marked DONE by the kitchen can be picked up.' });
+    const pending = [];
+    if (order.status !== 'DONE') pending.push('the kitchen to finish preparation');
+    if (order.paymentStatus !== 'PAID') pending.push('the cashier to confirm payment');
+    res.status(409).json({
+      error: `Delivery cannot be collected until ${pending.join(' and ')}.`,
+    });
     return;
   }
   const updated = await prisma.order.updateMany({
-    where: { ...where, status: 'DONE', deliveryStatus: 'ASSIGNED' },
+    where: { ...where, status: 'DONE', paymentStatus: 'PAID', deliveryStatus: 'ASSIGNED' },
     data: { deliveryStatus: 'OUT_FOR_DELIVERY', pickedUpAt: new Date() },
   });
   if (updated.count !== 1) {
@@ -92,13 +120,17 @@ router.patch('/orders/:id/delivered', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Assigned delivery not found.' });
     return;
   }
+  if (order.deliveryStatus === 'DELIVERED' && order.status === 'DONE') {
+    res.json(await prisma.order.findUnique({ where: { id }, select: driverOrderSelect }));
+    return;
+  }
   if (!canCompleteDelivery(order)) {
     res.status(409).json({ error: 'Only an order out for delivery can be marked delivered.' });
     return;
   }
   const updated = await prisma.order.updateMany({
     where: { ...where, status: 'DONE', deliveryStatus: 'OUT_FOR_DELIVERY' },
-    data: { deliveryStatus: 'DELIVERED', status: 'DELIVERED', deliveredAt: new Date() },
+    data: { deliveryStatus: 'DELIVERED', deliveredAt: new Date() },
   });
   if (updated.count !== 1) {
     res.status(409).json({ error: 'Delivery status changed; reload before trying again.' });
