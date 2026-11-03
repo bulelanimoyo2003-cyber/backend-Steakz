@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
 import { canReserveTable, validateBookingDetails } from '../lib/bookingValidation.js';
+import { getDineInBookingWindow, isDineInBookingEligible } from '../lib/dineInBooking.js';
 import { isSameCheckoutRequest, type CheckoutSnapshot } from '../lib/orderIdempotency.js';
 
 const router = Router();
@@ -17,6 +18,31 @@ router.get('/bookings', async (req: Request, res: Response) => {
     orderBy: { date: 'desc' },
   });
   res.json(bookings);
+});
+
+router.get('/bookings/eligible', async (req: Request, res: Response) => {
+  const branchId = Number(req.query.branchId);
+  if (!Number.isInteger(branchId) || branchId <= 0) {
+    res.status(400).json({ error: 'A valid branchId is required.' });
+    return;
+  }
+
+  const now = Date.now();
+  const window = getDineInBookingWindow();
+  const bookings = await prisma.booking.findMany({
+    where: {
+      customerId: req.user!.id,
+      status: 'CONFIRMED',
+      date: {
+        gte: new Date(now - window.visitDurationMinutes * 60_000),
+        lte: new Date(now + window.earlyWindowMinutes * 60_000),
+      },
+      table: { branchId, branch: { isActive: true } },
+    },
+    include: { table: { include: { branch: { select: { name: true } } } } },
+    orderBy: { date: 'asc' },
+  });
+  res.json(bookings.filter((booking) => isDineInBookingEligible(booking, now, window)));
 });
 
 router.post('/bookings', async (req: Request, res: Response) => {
@@ -180,12 +206,20 @@ router.post('/orders', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Booking not found.' });
       return;
     }
-    if (requestedBranchId !== undefined && requestedBranchId !== booking.table.branchId) {
+    if (!Number.isInteger(requestedBranchId) || !requestedBranchId || requestedBranchId <= 0) {
+      res.status(400).json({ error: 'A valid branchId is required for dine-in orders.' });
+      return;
+    }
+    if (requestedBranchId !== booking.table.branchId) {
       res.status(400).json({ error: 'Dine-in orders must use the location assigned to the reservation.' });
       return;
     }
     if (!booking.table.branch.isActive) {
       res.status(400).json({ error: 'This location is no longer active. Please select an active location.' });
+      return;
+    }
+    if (!isDineInBookingEligible(booking)) {
+      res.status(409).json({ error: 'Dine-in orders require a confirmed booking within its dining window.' });
       return;
     }
     bookingId = requestedBookingId;
@@ -320,6 +354,20 @@ router.post('/orders', async (req: Request, res: Response) => {
 
   try {
     const order = await prisma.$transaction(async (transaction) => {
+      if (orderType === 'DINE_IN') {
+        const currentBooking = await transaction.booking.findFirst({
+          where: {
+            id: bookingId,
+            customerId,
+            table: { branchId: resolvedBranchId, branch: { isActive: true } },
+          },
+          select: { status: true, date: true },
+        });
+        if (!currentBooking || !isDineInBookingEligible(currentBooking)) {
+          throw new DineInBookingUnavailableError();
+        }
+      }
+
       const branch = orderType === 'DELIVERY'
         ? await transaction.branch.findUnique({
           where: { id: resolvedBranchId },
@@ -370,6 +418,10 @@ router.post('/orders', async (req: Request, res: Response) => {
 
     res.status(201).json(order);
   } catch (error) {
+    if (error instanceof DineInBookingUnavailableError) {
+      res.status(409).json({ error: 'Dine-in orders require a confirmed booking within its dining window.' });
+      return;
+    }
     if (error instanceof DeliveryUnavailableError) {
       res.status(409).json({
         error: 'Delivery is unavailable at this location because no eligible delivery driver is designated.',
@@ -393,6 +445,7 @@ router.post('/orders', async (req: Request, res: Response) => {
 });
 
 class DeliveryUnavailableError extends Error {}
+class DineInBookingUnavailableError extends Error {}
 
 function buildReceiptNumber(order: { id: number; createdAt: Date }) {
   return `STEAKZ-${order.id}-${Math.floor(order.createdAt.getTime() / 1000)}`;

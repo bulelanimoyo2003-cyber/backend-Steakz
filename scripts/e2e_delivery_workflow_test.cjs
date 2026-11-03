@@ -133,7 +133,7 @@ async function seedTestFixtures(prisma, bcrypt) {
 
   const branchFixtures = [];
   for (const branch of branches) {
-    const [chef, cashier, driver, menuItem] = await Promise.all([
+    const [chef, cashier, driver, menuItem, table] = await Promise.all([
       prisma.user.create({
         data: {
           name: `${branch.name} Chef`,
@@ -169,8 +169,15 @@ async function seedTestFixtures(prisma, bcrypt) {
           branchId: branch.id,
         },
       }),
+      prisma.table.create({
+        data: {
+          tableNumber: 1,
+          capacity: 4,
+          branchId: branch.id,
+        },
+      }),
     ]);
-    branchFixtures.push({ branch, chef, cashier, driver, menuItem });
+    branchFixtures.push({ branch, chef, cashier, driver, menuItem, table });
   }
   await Promise.all(branchFixtures.map(({ branch, driver }) => prisma.branch.update({
     where: { id: branch.id },
@@ -212,6 +219,172 @@ function createApi(baseUrl) {
   };
 }
 
+async function verifyDineInBookingCheckout(api, fixtures) {
+  const first = fixtures.branchFixtures[0];
+  const second = fixtures.branchFixtures[1];
+  const makeBooking = (customer, branchFixture, date, status = 'CONFIRMED') => fixtures.prisma.booking.create({
+    data: {
+      customerId: customer.id,
+      tableId: branchFixture.table.id,
+      guestCount: 2,
+      date,
+      status,
+    },
+  });
+  const validBooking = await makeBooking(
+    fixtures.customer,
+    first,
+    new Date(Date.now() + 30 * 60_000),
+  );
+  const ongoingBooking = await makeBooking(
+    fixtures.customer,
+    first,
+    new Date(Date.now() - 30 * 60_000),
+  );
+  const wrongBranchBooking = await makeBooking(
+    fixtures.customer,
+    second,
+    new Date(Date.now() + 30 * 60_000),
+  );
+  const wrongCustomerBooking = await makeBooking(
+    fixtures.otherCustomer,
+    first,
+    new Date(Date.now() + 30 * 60_000),
+  );
+  const pendingBooking = await makeBooking(
+    fixtures.customer,
+    first,
+    new Date(Date.now() + 30 * 60_000),
+    'PENDING',
+  );
+  const cancelledBooking = await makeBooking(
+    fixtures.customer,
+    first,
+    new Date(Date.now() + 30 * 60_000),
+    'CANCELLED',
+  );
+  const completedBooking = await makeBooking(
+    fixtures.customer,
+    first,
+    new Date(Date.now() + 30 * 60_000),
+    'COMPLETED',
+  );
+  const expiredBooking = await makeBooking(
+    fixtures.customer,
+    first,
+    new Date(Date.now() - 245 * 60_000),
+  );
+  const tooEarlyBooking = await makeBooking(
+    fixtures.customer,
+    first,
+    new Date(Date.now() + 65 * 60_000),
+  );
+
+  const eligible = await api(`/customer/bookings/eligible?branchId=${first.branch.id}`, {
+    token: tokenFor(fixtures.customer),
+  });
+  assert.equal(eligible.status, 200);
+  assert.deepEqual(eligible.data.map((booking) => booking.id).sort((a, b) => a - b),
+    [validBooking.id, ongoingBooking.id].sort((a, b) => a - b));
+
+  const orderCountBeforeRejections = await fixtures.prisma.order.count();
+  const attemptDineIn = (bookingId, branchId = first.branch.id, token = tokenFor(fixtures.customer)) => api('/customer/orders', {
+    method: 'POST',
+    token,
+    body: {
+      orderType: 'DINE_IN',
+      branchId,
+      ...(bookingId === undefined ? {} : { bookingId }),
+      items: [{ menuItemId: first.menuItem.id, quantity: 1 }],
+    },
+  });
+  assert.equal((await attemptDineIn()).status, 400, 'dine-in checkout without a booking is rejected');
+  const missingBranch = await api('/customer/orders', {
+    method: 'POST',
+    token: tokenFor(fixtures.customer),
+    body: {
+      orderType: 'DINE_IN',
+      bookingId: validBooking.id,
+      items: [{ menuItemId: first.menuItem.id, quantity: 1 }],
+    },
+  });
+  assert.equal(missingBranch.status, 400, 'dine-in checkout must include the selected branch');
+  assert.equal((await attemptDineIn(wrongBranchBooking.id)).status, 400, 'a booking from another branch is rejected');
+  assert.equal((await attemptDineIn(wrongCustomerBooking.id)).status, 403, 'another customer’s booking is rejected');
+  for (const [label, booking] of [
+    ['pending', pendingBooking],
+    ['cancelled', cancelledBooking],
+    ['completed', completedBooking],
+    ['expired', expiredBooking],
+    ['outside the early window', tooEarlyBooking],
+  ]) {
+    const rejected = await attemptDineIn(booking.id);
+    assert.equal(rejected.status, 409, `${label} bookings are rejected: ${JSON.stringify(rejected.data)}`);
+  }
+  assert.equal(await fixtures.prisma.order.count(), orderCountBeforeRejections,
+    'rejected direct API checkout requests do not create orders');
+
+  const placeValidDineIn = (bookingId) => api('/customer/orders', {
+    method: 'POST',
+    token: tokenFor(fixtures.customer),
+    idempotencyKey: crypto.randomUUID(),
+    body: {
+      orderType: 'DINE_IN',
+      branchId: first.branch.id,
+      bookingId,
+      items: [{ menuItemId: first.menuItem.id, quantity: 1 }],
+    },
+  });
+  const dineInOrder = await placeValidDineIn(ongoingBooking.id);
+  assert.equal(dineInOrder.status, 201);
+  assert.equal(dineInOrder.data.orderType, 'DINE_IN');
+  assert.equal(dineInOrder.data.branchId, first.branch.id);
+  assert.equal(dineInOrder.data.bookingId, ongoingBooking.id);
+  assert.equal((await api(`/cashier/orders/${dineInOrder.data.id}/pay`, {
+    method: 'PATCH',
+    token: tokenFor(first.cashier),
+  })).status, 200);
+  assert.equal((await api(`/cashier/orders/${dineInOrder.data.id}/deliver`, {
+    method: 'PATCH',
+    token: tokenFor(first.cashier),
+  })).status, 200);
+  assert.equal((await fixtures.prisma.booking.findUnique({ where: { id: ongoingBooking.id } })).status, 'CONFIRMED');
+  const additionalVisitOrder = await placeValidDineIn(ongoingBooking.id);
+  assert.equal(additionalVisitOrder.status, 201, 'an additional order during an ongoing confirmed visit is allowed');
+  assert.equal(additionalVisitOrder.data.bookingId, ongoingBooking.id);
+  const upcomingVisitOrder = await placeValidDineIn(validBooking.id);
+  assert.equal(upcomingVisitOrder.status, 201, 'a confirmed upcoming visit within its early window allows ordering');
+  assert.equal(upcomingVisitOrder.data.bookingId, validBooking.id);
+  const completedVisit = await api(`/branch-manager/bookings/${ongoingBooking.id}/status`, {
+    method: 'PATCH',
+    token: tokenFor(fixtures.manager),
+    branchId: first.branch.id,
+    body: { status: 'COMPLETED' },
+  });
+  assert.equal(completedVisit.status, 200);
+  assert.equal(completedVisit.data.status, 'COMPLETED');
+  assert.equal((await fixtures.prisma.table.findUnique({ where: { id: first.table.id } })).status, 'CLEANING');
+
+  const collection = await api('/customer/orders', {
+    method: 'POST',
+    token: tokenFor(fixtures.customer),
+    body: {
+      orderType: 'COLLECTION',
+      branchId: first.branch.id,
+      items: [{ menuItemId: first.menuItem.id, quantity: 1 }],
+    },
+  });
+  assert.equal(collection.status, 201, 'collection remains available without a booking');
+  assert.equal(collection.data.bookingId, null);
+  return {
+    eligibleBookingsListed: eligible.data.length,
+    rejectedDineInAttempts: 9,
+    validDineInOrders: 3,
+    additionalOrderDuringVisit: true,
+    collectionWithoutBooking: true,
+  };
+}
+
 async function waitForServer(baseUrl, child, logs) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     if (child.exitCode !== null) {
@@ -248,6 +421,8 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
     branchId: fixtures.branches[1].id,
   });
   assert.equal(restrictedAccess.status, 403, 'branch staff cannot access an unassigned branch');
+
+  const dineInResults = await verifyDineInBookingCheckout(api, fixtures);
 
   const firstFixture = fixtures.branchFixtures[0];
   const beforeUnavailableCheckout = await fixtures.prisma.order.count();
@@ -313,8 +488,10 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
   api = await restartApi();
   const customerOrdersAfterRestart = await api('/customer/orders', { token: customerToken });
   assert.equal(customerOrdersAfterRestart.status, 200);
-  assert.equal(customerOrdersAfterRestart.data.length, 4);
-  assert.ok(customerOrdersAfterRestart.data.every((order) => order.deliveryStatus === 'ASSIGNED'));
+  assert.equal(customerOrdersAfterRestart.data.length, 8);
+  const deliveryOrdersAfterRestart = customerOrdersAfterRestart.data.filter((order) => order.orderType === 'DELIVERY');
+  assert.equal(deliveryOrdersAfterRestart.length, 4);
+  assert.ok(deliveryOrdersAfterRestart.every((order) => order.deliveryStatus === 'ASSIGNED'));
 
   let crossBranchDriverDenials = 0;
   let assignedBeforeKitchenReady = 0;
@@ -523,15 +700,17 @@ async function runWorkflow(initialApi, fixtures, restartApi) {
   assert.equal(hqOrders.status, 200);
   assert.ok(orders.every(({ orderId }) => hqOrders.data.some((order) => order.id === orderId)));
   const customerOrders = await api('/customer/orders', { token: customerToken });
-  for (const order of customerOrders.data) {
+  const completedDeliveryOrders = customerOrders.data.filter((order) => order.orderType === 'DELIVERY');
+  for (const order of completedDeliveryOrders) {
     assert.equal(order.status, 'DONE');
     assert.equal(order.deliveryStatus, 'DELIVERED');
     assert.ok(order.pickedUpAt);
     assert.ok(order.deliveredAt);
   }
-  assert.ok(customerOrders.data.every((order) => order.paymentStatus === 'PAID'));
+  assert.ok(completedDeliveryOrders.every((order) => order.paymentStatus === 'PAID'));
   return {
     activeBranches: expectedBranches,
+    dineInBookings: dineInResults,
     automaticAssignments: orders.length,
     completedWorkflows: orders.length,
     restartPersistence: true,
@@ -575,6 +754,8 @@ async function main() {
           JWT_SECRET: jwtSecret,
           NODE_ENV: 'production',
           PORT: String(port),
+          DINE_IN_BOOKING_EARLY_WINDOW_MINUTES: '60',
+          DINE_IN_BOOKING_DURATION_MINUTES: '240',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });

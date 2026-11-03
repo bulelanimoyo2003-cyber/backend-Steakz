@@ -16,7 +16,7 @@ async function completeBookingIfOrderPaidAndDelivered(orderId: number) {
     include: { booking: true },
   });
 
-  if (!order || !order.booking) {
+  if (!order || !order.booking || order.orderType === 'DINE_IN') {
     return;
   }
 

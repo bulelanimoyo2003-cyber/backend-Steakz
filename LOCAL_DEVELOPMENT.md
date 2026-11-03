@@ -56,6 +56,12 @@ On another local presentation checkout, first preserve that checkout's database 
 
 Delivery orders are automatically assigned to the active designated driver for the selected branch. The root SQLite Prisma schema and client implement this behavior; the nested PostgreSQL API is a separate application.
 
+## Dine-in booking eligibility
+
+Dine-in checkout requires the signed-in customer to select their own `CONFIRMED` booking at the selected active branch. By default, a booking is eligible from 60 minutes before its reservation time through 240 minutes after it; the interval is inclusive. These limits are configured with `DINE_IN_BOOKING_EARLY_WINDOW_MINUTES` and `DINE_IN_BOOKING_DURATION_MINUTES` in the root environment. The early window may be zero; duration must be a positive whole number. Invalid values stop checkout rather than being silently ignored.
+
+The customer menu requests eligible bookings from the API and requires an explicit selection. The API independently checks ownership, booking status, branch, active location, and current time, then repeats the eligibility check inside the order transaction. Multiple dine-in orders are allowed during one still-confirmed visit; creating an order does not complete or alter the booking. Collection and delivery do not require a booking. Delivery still requires an eligible designated driver and driver pickup still requires both cashier-confirmed payment and kitchen completion.
+
 ## Environment variables
 
 The root SQLite API reads its configuration from the root `.env`. The frontend uses relative `/api` requests during development and the proxy in `frontend/vite.config.ts`. The nested `backend/` project reads a separate PostgreSQL configuration and must not be started for the local presentation app.

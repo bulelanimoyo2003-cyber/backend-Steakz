@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { AxiosError } from 'axios';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
@@ -20,6 +20,13 @@ interface MenuItem {
   category: string;
 }
 
+interface EligibleBooking {
+  id: number;
+  date: string;
+  guestCount: number;
+  table: { tableNumber: number; branch: { name: string } };
+}
+
 export default function MenuPage() {
   const { user } = useAuth();
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -31,6 +38,11 @@ export default function MenuPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [orderType, setOrderType] = useState<'DINE_IN' | 'COLLECTION' | 'DELIVERY'>('DINE_IN');
+  const [eligibleBookings, setEligibleBookings] = useState<EligibleBooking[]>([]);
+  const [selectedBookingId, setSelectedBookingId] = useState('');
+  const [bookingLoadError, setBookingLoadError] = useState(false);
+  const [bookingLoadAttempt, setBookingLoadAttempt] = useState(0);
+  const [loadingBookings, setLoadingBookings] = useState(false);
   const [recipientName, setRecipientName] = useState('');
   const [recipientPhone, setRecipientPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
@@ -50,6 +62,32 @@ export default function MenuPage() {
       .then((response) => setBranches(response.data))
       .catch(() => setError('Unable to load branches.'));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    setEligibleBookings([]);
+    setSelectedBookingId('');
+    setBookingLoadError(false);
+
+    if (orderType !== 'DINE_IN' || !selectedId || user?.role !== 'CUSTOMER') {
+      setLoadingBookings(false);
+      return () => { active = false; };
+    }
+
+    setLoadingBookings(true);
+    api.get<EligibleBooking[]>('/customer/bookings/eligible', { params: { branchId: selectedId } })
+      .then((response) => {
+        if (active) setEligibleBookings(response.data);
+      })
+      .catch(() => {
+        if (active) setBookingLoadError(true);
+      })
+      .finally(() => {
+        if (active) setLoadingBookings(false);
+      });
+
+    return () => { active = false; };
+  }, [orderType, selectedId, user?.id, user?.role, bookingLoadAttempt]);
 
   async function loadMenu(branchId: number) {
     const cartBranchId = cart[0]?.branchId;
@@ -72,6 +110,8 @@ export default function MenuPage() {
     menuRequest.current = { id: requestId, branchId };
     const isCurrentRequest = () => menuRequest.current.id === requestId
       && menuRequest.current.branchId === branchId;
+    setEligibleBookings([]);
+    setSelectedBookingId('');
     setSelectedId(branchId);
     setMenu([]);
     setLoading(true);
@@ -206,14 +246,12 @@ export default function MenuPage() {
       const items = cart.map((c) => ({ menuItemId: c.item.id, quantity: c.quantity }));
       let payload: Record<string, unknown> = { orderType, branchId: selectedId, items };
       if (orderType === 'DINE_IN') {
-        const bookingsResp = await api.get('/customer/bookings');
-        const bookings = bookingsResp.data as { id: number; table: { branchId: number } }[];
-        const booking = bookings.find((candidate) => candidate.table.branchId === selectedId);
+        const booking = eligibleBookings.find((candidate) => candidate.id === Number(selectedBookingId));
         if (!booking) {
-          setNotice({ type: 'info', text: 'You have no booking at this location. Create a booking before ordering dine-in.' });
+          setNotice({ type: 'error', text: 'A confirmed booking is required to dine in. Please reserve a table first.' });
           return;
         }
-        payload = { orderType, bookingId: booking.id, items };
+        payload = { orderType, branchId: selectedId, bookingId: booking.id, items };
       } else if (orderType === 'DELIVERY') {
         payload = {
           ...payload,
@@ -244,6 +282,30 @@ export default function MenuPage() {
       return order;
     } catch (e: any) {
       console.error('[Checkout] Error', e);
+      if (orderType === 'DINE_IN' && e?.response?.status === 409) {
+        setSelectedBookingId('');
+        setBookingLoadError(false);
+        setLoadingBookings(true);
+        try {
+          const response = await api.get<EligibleBooking[]>('/customer/bookings/eligible', {
+            params: { branchId: selectedId },
+          });
+          setEligibleBookings(response.data);
+          setNotice({
+            type: 'error',
+            text: response.data.length === 0
+              ? 'A confirmed booking is required to dine in. Please reserve a table first.'
+              : 'That booking is no longer eligible. Select another confirmed booking.',
+          });
+        } catch {
+          setEligibleBookings([]);
+          setBookingLoadError(true);
+          setNotice({ type: 'error', text: 'Unable to refresh your eligible bookings. Please try again.' });
+        } finally {
+          setLoadingBookings(false);
+        }
+        return;
+      }
       const text = e?.response?.data?.error ?? 'Failed to create order.';
       setNotice({ type: 'error', text });
     } finally {
@@ -272,6 +334,8 @@ export default function MenuPage() {
             <label htmlFor="order-type">Order type</label>
             <select id="order-type" value={orderType} onChange={(event) => {
               checkoutRequestRef.current = null;
+              setEligibleBookings([]);
+              setSelectedBookingId('');
               setOrderType(event.target.value as typeof orderType);
             }}>
               <option value="DINE_IN">Dine-in (booking required)</option>
@@ -279,6 +343,44 @@ export default function MenuPage() {
               <option value="DELIVERY">Delivery</option>
             </select>
           </div>
+
+          {orderType === 'DINE_IN' && user?.role === 'CUSTOMER' && selectedId !== null && (
+            <div className="form-group">
+              <label htmlFor="dine-in-booking">Confirmed booking for this visit</label>
+              {loadingBookings ? (
+                <p role="status">Loading eligible bookings…</p>
+              ) : bookingLoadError ? (
+                <div className="alert alert-error" role="alert">
+                  Unable to load your eligible bookings.{' '}
+                  <button type="button" className="btn btn-sm" onClick={() => setBookingLoadAttempt((attempt) => attempt + 1)}>
+                    Retry
+                  </button>
+                </div>
+              ) : eligibleBookings.length === 0 ? (
+                <div className="alert alert-error" role="alert">
+                  <p>A confirmed booking is required to dine in. Please reserve a table first.</p>
+                  <Link className="btn btn-primary" to="/book">Reserve a table</Link>
+                </div>
+              ) : (
+                <select
+                  id="dine-in-booking"
+                  value={selectedBookingId}
+                  onChange={(event) => {
+                    checkoutRequestRef.current = null;
+                    setSelectedBookingId(event.target.value);
+                  }}
+                  required
+                >
+                  <option value="">Select a confirmed booking</option>
+                  {eligibleBookings.map((booking) => (
+                    <option key={booking.id} value={booking.id}>
+                      {new Date(booking.date).toLocaleString()} · Table {booking.table.tableNumber} · {booking.guestCount} guests
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
 
           {orderType === 'DELIVERY' && (
             <div className="delivery-details">
@@ -348,6 +450,9 @@ export default function MenuPage() {
               type="button"
               onClick={handleCheckout}
               disabled={cart.length === 0 || checkoutInProgress
+                || (orderType === 'DINE_IN'
+                  && (loadingBookings || bookingLoadError || !selectedBookingId
+                    || !eligibleBookings.some((booking) => booking.id === Number(selectedBookingId))))
                 || (orderType === 'DELIVERY'
                   && selectedId !== null
                   && !branches.find((branch) => branch.id === selectedId)?.deliveryAvailable)}

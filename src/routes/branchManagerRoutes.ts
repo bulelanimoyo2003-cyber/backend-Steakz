@@ -148,6 +148,9 @@ router.patch('/bookings/:id/status', async (req: Request, res: Response) => {
   if (status === 'CANCELLED' && booking.table?.status !== 'CLEANING') {
     data.table = { update: { status: 'AVAILABLE' as any } };
   }
+  if (status === 'COMPLETED') {
+    data.table = { update: { status: 'CLEANING' as any } };
+  }
 
   const updated = await prisma.booking.update({ where: { id }, data });
 
