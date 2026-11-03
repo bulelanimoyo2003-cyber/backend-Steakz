@@ -47,3 +47,15 @@ test('each failed customer section retains its error for honest reporting', asyn
   assert.deepEqual(results.orders, { ok: true, value: [] });
   assert.deepEqual(results.receipts, { ok: false, error: receiptsError });
 });
+
+test('missing dashboard sections are reported as failures instead of crashing', async () => {
+  const results = await loadCustomerDashboard({
+    bookings: undefined as any,
+    orders: async () => [],
+    receipts: undefined as any,
+  });
+
+  assert.equal(results.bookings.ok, false);
+  assert.equal(results.orders.ok, true);
+  assert.equal(results.receipts.ok, false);
+});

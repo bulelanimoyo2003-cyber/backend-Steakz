@@ -33,3 +33,9 @@ test('an idempotency key cannot silently reuse an order for different checkout d
     items: [{ menuItemId: 11, quantity: 3, unitPrice: 15 }],
   }), false);
 });
+
+test('malformed checkout payloads are rejected instead of comparing partial data', () => {
+  assert.equal(isSameCheckoutRequest(checkout as any, { ...checkout, items: [{ menuItemId: 11, quantity: 0, unitPrice: 15 }] }), false);
+  assert.equal(isSameCheckoutRequest(checkout as any, { ...checkout, items: [{ menuItemId: 11, quantity: 2, unitPrice: 15 }, { menuItemId: 11, quantity: 2, unitPrice: 15 }] }), false);
+  assert.equal(isSameCheckoutRequest(null as any, checkout), false);
+});

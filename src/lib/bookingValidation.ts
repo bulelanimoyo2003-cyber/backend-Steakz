@@ -15,11 +15,11 @@ export function validateBookingDetails(
     return 'A valid reservation date and time is required.';
   }
 
-  const date = new Date(dateValue);
+  const date = new Date(dateValue.trim());
   if (Number.isNaN(date.getTime()) || date.getTime() <= now) {
     return 'Reservation date and time must be in the future.';
   }
-  if (tableCapacity !== undefined && guestCount > tableCapacity) {
+  if (typeof tableCapacity === 'number' && Number.isFinite(tableCapacity) && tableCapacity > 0 && guestCount > tableCapacity) {
     return `guestCount cannot exceed this table's capacity of ${tableCapacity}.`;
   }
 
@@ -27,5 +27,5 @@ export function validateBookingDetails(
 }
 
 export function canReserveTable(table: { isAvailable: boolean; status: string } | null): boolean {
-  return table !== null && table.isAvailable && table.status === 'AVAILABLE';
+  return table !== null && table.isAvailable === true && table.status === 'AVAILABLE';
 }

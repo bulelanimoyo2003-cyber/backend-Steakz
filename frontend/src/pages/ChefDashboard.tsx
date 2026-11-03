@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../api/axios';
 import KpiCard from '../components/KpiCard';
-import { useAuth } from '../context/AuthContext';
 
 interface OrderItem {
   menuItem: { name: string };
@@ -24,49 +23,25 @@ interface MenuItem {
 }
 
 export default function ChefDashboard() {
-  const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [error, setError] = useState('');
-  const requestGeneration = useRef(0);
 
-  const loadOrders = useCallback(async () => {
-    const generation = requestGeneration.current;
+  async function loadOrders() {
     try {
       const response = await api.get<Order[]>('/chef/orders');
-      if (generation === requestGeneration.current) setOrders(response.data);
+      setOrders(response.data);
     } catch {
-      if (generation === requestGeneration.current) setError('Unable to load orders.');
+      setError('Unable to load orders.');
     }
-  }, [user?.id]);
+  }
 
   useEffect(() => {
-    requestGeneration.current += 1;
-    const generation = requestGeneration.current;
-    setOrders([]);
-    setMenu([]);
-    setError('');
-    void loadOrders();
+    loadOrders();
     api.get<MenuItem[]>('/chef/menu')
-      .then((response) => {
-        if (generation === requestGeneration.current) setMenu(response.data);
-      })
-      .catch(() => {
-        if (generation === requestGeneration.current) setError('Unable to load menu items.');
-      });
-    const refreshVisibleTab = () => {
-      if (document.visibilityState === 'visible') void loadOrders();
-    };
-    const interval = setInterval(refreshVisibleTab, 10000);
-    window.addEventListener('focus', loadOrders);
-    document.addEventListener('visibilitychange', refreshVisibleTab);
-    return () => {
-      requestGeneration.current += 1;
-      clearInterval(interval);
-      window.removeEventListener('focus', loadOrders);
-      document.removeEventListener('visibilitychange', refreshVisibleTab);
-    };
-  }, [loadOrders, user?.id]);
+      .then((response) => setMenu(response.data))
+      .catch(() => setError('Unable to load menu items.'));
+  }, []);
 
   async function markDone(id: number) {
     try {

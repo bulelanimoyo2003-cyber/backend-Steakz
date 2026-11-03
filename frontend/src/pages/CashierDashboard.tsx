@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../api/axios';
-import { useAuth } from '../context/AuthContext';
 
 interface MenuItem {
   id: number;
@@ -30,59 +29,29 @@ interface Order {
 }
 
 export default function CashierDashboard() {
-  const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [selected, setSelected] = useState<SelectedItem[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const requestGeneration = useRef(0);
-
-  const loadOrders = useCallback(async () => {
-    const generation = requestGeneration.current;
-    try {
-      const response = await api.get<Order[]>('/cashier/orders');
-      if (generation === requestGeneration.current) setOrders(response.data);
-    } catch (requestError: unknown) {
-      if (generation !== requestGeneration.current) return;
-      console.error('[Cashier] orders load error', requestError);
-      const message = (requestError as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      setError(message ?? 'Unable to load orders.');
-    }
-  }, [user?.id]);
 
   useEffect(() => {
-    requestGeneration.current += 1;
-    const generation = requestGeneration.current;
-    setOrders([]);
-    setMenu([]);
-    setSelected([]);
-    setError('');
-    setNotice(null);
-    void loadOrders();
-    api.get<MenuItem[]>('/cashier/menu')
-      .then((response) => {
-        if (generation === requestGeneration.current) setMenu(response.data);
-      })
+    api.get<Order[]>('/cashier/orders')
+      .then((response) => setOrders(response.data))
       .catch((e) => {
-        if (generation !== requestGeneration.current) return;
+        console.error('[Cashier] orders load error', e);
+        const message = (e as any)?.response?.data?.error ?? 'Unable to load orders.';
+        setError(message);
+      });
+
+    api.get<MenuItem[]>('/cashier/menu')
+      .then((response) => setMenu(response.data))
+      .catch((e) => {
         console.error('[Cashier] menu load error', e);
         const message = (e as any)?.response?.data?.error ?? 'Unable to load menu.';
         setError(message);
       });
-    const refreshVisibleTab = () => {
-      if (document.visibilityState === 'visible') void loadOrders();
-    };
-    const interval = setInterval(refreshVisibleTab, 10000);
-    window.addEventListener('focus', loadOrders);
-    document.addEventListener('visibilitychange', refreshVisibleTab);
-    return () => {
-      requestGeneration.current += 1;
-      clearInterval(interval);
-      window.removeEventListener('focus', loadOrders);
-      document.removeEventListener('visibilitychange', refreshVisibleTab);
-    };
-  }, [loadOrders, user?.id]);
+  }, []);
 
   function toggleItem(id: number) {
     setSelected((prev) => {
@@ -110,7 +79,8 @@ export default function CashierDashboard() {
       await api.post('/cashier/orders', {
         items: selected.map((item) => ({ menuItemId: item.id, quantity: item.qty })),
       });
-      await loadOrders();
+      const response = await api.get<Order[]>('/cashier/orders');
+      setOrders(response.data);
       setSelected([]);
       setNotice({ type: 'success', message: 'Order created successfully.' });
     } catch (err: unknown) {
@@ -126,7 +96,8 @@ export default function CashierDashboard() {
   async function markDelivered(id: number) {
     try {
       await api.patch(`/cashier/orders/${id}/deliver`);
-      await loadOrders();
+      const response = await api.get<Order[]>('/cashier/orders');
+      setOrders(response.data);
       setNotice({ type: 'success', message: 'Order marked delivered.' });
     } catch (err: unknown) {
       console.error('[Cashier] mark delivered error', err);
@@ -141,7 +112,8 @@ export default function CashierDashboard() {
   async function markPaid(id: number) {
     try {
       await api.patch(`/cashier/orders/${id}/pay`);
-      await loadOrders();
+      const response = await api.get<Order[]>('/cashier/orders');
+      setOrders(response.data);
       setNotice({ type: 'success', message: 'Payment recorded.' });
     } catch (err: unknown) {
       console.error('[Cashier] mark paid error', err);

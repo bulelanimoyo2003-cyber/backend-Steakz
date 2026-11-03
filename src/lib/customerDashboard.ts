@@ -15,10 +15,25 @@ export async function loadCustomerDashboard<TBooking, TOrder, TReceipt>(
     receipts: () => Promise<TReceipt>;
   },
 ): Promise<CustomerDashboardResults<TBooking, TOrder, TReceipt>> {
-  const [bookings, orders, receipts] = await Promise.allSettled([
-    requests.bookings(),
-    requests.orders(),
-    requests.receipts(),
+  const loadSection = async <T>(sectionName: 'bookings' | 'orders' | 'receipts', request: unknown): Promise<PromiseSettledResult<T>> => {
+    if (typeof request !== 'function') {
+      return {
+        status: 'rejected',
+        reason: new TypeError(`Dashboard section "${sectionName}" is not a function.`),
+      };
+    }
+
+    try {
+      return { status: 'fulfilled', value: await request() as T };
+    } catch (error) {
+      return { status: 'rejected', reason: error };
+    }
+  };
+
+  const [bookings, orders, receipts] = await Promise.all([
+    loadSection<TBooking>('bookings', requests.bookings),
+    loadSection<TOrder>('orders', requests.orders),
+    loadSection<TReceipt>('receipts', requests.receipts),
   ]);
 
   const toResult = <T>(result: PromiseSettledResult<T>): SectionResult<T> =>

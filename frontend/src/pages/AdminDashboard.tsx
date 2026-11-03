@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import api from '../api/axios';
-import { useAuth } from '../context/AuthContext';
 
 interface User {
   id: number;
@@ -23,7 +22,6 @@ interface Branch {
 const ROLES = ['ADMIN', 'HQ_MANAGER', 'BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER', 'CUSTOMER'];
 
 export default function AdminDashboard() {
-  const { user } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [uName, setUName] = useState('');
@@ -36,27 +34,16 @@ export default function AdminDashboard() {
   const [bName, setBName] = useState('');
   const [bAddress, setBAddress] = useState('');
   const [bMsg, setBMsg] = useState('');
-  const requestGeneration = useRef(0);
 
-  useEffect(() => {
-    requestGeneration.current += 1;
-    setUsers([]);
-    setBranches([]);
-    setUMsg('');
-    setBMsg('');
-    void loadAll();
-    return () => { requestGeneration.current += 1; };
-  }, [user?.id]);
+  useEffect(() => { loadAll(); }, []);
 
   async function loadAll() {
-    const generation = ++requestGeneration.current;
     try {
       const [usersResponse, branchesResponse] = await Promise.all([api.get<User[]>('/admin/users'), api.get<Branch[]>('/admin/branches')]);
-      if (generation !== requestGeneration.current) return;
       setUsers(usersResponse.data);
       setBranches(branchesResponse.data);
     } catch {
-      if (generation === requestGeneration.current) setUMsg('Unable to load admin data.');
+      setUMsg('Unable to load admin data.');
     }
   }
 

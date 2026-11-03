@@ -34,3 +34,10 @@ test('only available tables in AVAILABLE status can be reserved', () => {
   assert.equal(canReserveTable({ isAvailable: true, status: 'OCCUPIED' }), false);
   assert.equal(canReserveTable(null), false);
 });
+
+test('reservation validation ignores bad capacity values and rejects malformed table data', () => {
+  assert.equal(validateBookingDetails(1, 2, futureDate, Number.NaN, now), null);
+  assert.equal(validateBookingDetails(1, 2, futureDate, Number.POSITIVE_INFINITY, now), null);
+  assert.equal(canReserveTable({ isAvailable: true, status: 'AVAILABLE' } as any), true);
+  assert.equal(canReserveTable({ isAvailable: 'true' as any, status: 'AVAILABLE' }), false);
+});

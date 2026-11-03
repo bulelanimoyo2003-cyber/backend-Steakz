@@ -8,7 +8,6 @@ router.use(verifyToken, requireRole(['HQ_MANAGER', 'ADMIN']));
 
 router.get('/overview', async (_req: Request, res: Response) => {
   const branches = await prisma.branch.findMany({
-    where: { isActive: true },
     include: { _count: { select: { orders: true, users: true, tables: true } } },
     orderBy: { id: 'asc' },
   });
@@ -17,7 +16,6 @@ router.get('/overview', async (_req: Request, res: Response) => {
 
 router.get('/orders', async (_req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
-    where: { branch: { isActive: true } },
     include: {
       branch: { select: { id: true, name: true } },
       items: { include: { menuItem: true } },
@@ -31,15 +29,7 @@ router.get('/orders', async (_req: Request, res: Response) => {
 
 router.get('/staff', async (_req: Request, res: Response) => {
   const staff = await prisma.user.findMany({
-    where: {
-      OR: [
-        { role: 'HQ_MANAGER' },
-        {
-          role: { in: ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER'] },
-          branch: { isActive: true },
-        },
-      ],
-    },
+    where: { role: { in: ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER', 'HQ_MANAGER'] } },
     select: {
       id: true,
       name: true,
@@ -54,29 +44,22 @@ router.get('/staff', async (_req: Request, res: Response) => {
 });
 
 router.get('/sales', async (_req: Request, res: Response) => {
-  const [branches, sales] = await Promise.all([
-    prisma.branch.findMany({
-      where: { isActive: true },
-      select: { id: true, name: true },
-      orderBy: { id: 'asc' },
-    }),
-    prisma.order.groupBy({
-      by: ['branchId'],
-      _sum: { total: true },
-      _count: { id: true },
-      where: { status: { in: ['DONE', 'DELIVERED'] }, branch: { isActive: true } },
-    }),
-  ]);
-  const salesByBranch = new Map(sales.map((sale) => [sale.branchId, sale]));
-  const result = branches.map((branch) => {
-    const sale = salesByBranch.get(branch.id);
-    return {
-      branchId: branch.id,
-      branchName: branch.name,
-      totalSales: sale?._sum.total ?? 0,
-      orderCount: sale?._count.id ?? 0,
-    };
+  const sales = await prisma.order.groupBy({
+    by: ['branchId'],
+    _sum: { total: true },
+    _count: { id: true },
+    where: { status: { in: ['DONE', 'DELIVERED'] } },
   });
+
+  const branches = await prisma.branch.findMany({ select: { id: true, name: true } });
+  const branchMap = Object.fromEntries(branches.map((b: { id: number; name: string }) => [b.id, b.name]));
+
+  const result = sales.map((s: { branchId: number; _sum: { total: number | null }; _count: { id: number } }) => ({
+    branchId: s.branchId,
+    branchName: branchMap[s.branchId] ?? 'Unknown',
+    totalSales: s._sum.total ?? 0,
+    orderCount: s._count.id,
+  }));
   res.json(result);
 });
 

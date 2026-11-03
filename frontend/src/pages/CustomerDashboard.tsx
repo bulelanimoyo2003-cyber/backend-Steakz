@@ -58,15 +58,6 @@ export default function CustomerDashboard() {
   const [success, setSuccess] = useState('');
 
   useEffect(() => {
-    setBookings([]);
-    setOrders([]);
-    setReceipts([]);
-    setLoadErrors({ bookings: false, orders: false, receipts: false });
-    setError('');
-    setSuccess('');
-  }, [user?.id]);
-
-  useEffect(() => {
     let mounted = true;
     let requestId = 0;
 

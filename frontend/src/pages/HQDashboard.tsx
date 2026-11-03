@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../api/axios';
-import { useAuth } from '../context/AuthContext';
 
 interface BranchSales {
   branchId: number;
@@ -29,52 +28,36 @@ interface Order {
 }
 
 export default function HQDashboard() {
-  const { user } = useAuth();
   const [sales, setSales] = useState<BranchSales[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [error, setError] = useState('');
-  const requestGeneration = useRef(0);
 
   const loadOverview = useCallback(async () => {
-    const generation = requestGeneration.current;
     try {
       const [salesResponse, staffResponse, ordersResponse] = await Promise.all([
         api.get<BranchSales[]>('/hq/sales'),
         api.get<StaffMember[]>('/hq/staff'),
         api.get<Order[]>('/hq/orders'),
       ]);
-      if (generation === requestGeneration.current) {
-        setSales(salesResponse.data);
-        setStaff(staffResponse.data);
-        setOrders(ordersResponse.data);
-        setError('');
-      }
+      setSales(salesResponse.data);
+      setStaff(staffResponse.data);
+      setOrders(ordersResponse.data);
+      setError('');
     } catch {
-      if (generation === requestGeneration.current) setError('Unable to load the HQ overview.');
+      setError('Unable to load the HQ overview.');
     }
-  }, [user?.id]);
+  }, []);
 
   useEffect(() => {
-    requestGeneration.current += 1;
-    setSales([]);
-    setStaff([]);
-    setOrders([]);
-    setError('');
     void loadOverview();
-    const refreshVisibleTab = () => {
-      if (document.visibilityState === 'visible') void loadOverview();
-    };
-    const interval = setInterval(refreshVisibleTab, 10000);
+    const interval = setInterval(() => void loadOverview(), 10000);
     window.addEventListener('focus', loadOverview);
-    document.addEventListener('visibilitychange', refreshVisibleTab);
     return () => {
-      requestGeneration.current += 1;
       clearInterval(interval);
       window.removeEventListener('focus', loadOverview);
-      document.removeEventListener('visibilitychange', refreshVisibleTab);
     };
-  }, [loadOverview, user?.id]);
+  }, [loadOverview]);
 
   const totalRevenue = sales.reduce((sum, branch) => sum + branch.totalSales, 0);
   const totalOrders = sales.reduce((sum, branch) => sum + branch.orderCount, 0);
@@ -102,8 +85,8 @@ export default function HQDashboard() {
           <div className="stat-label">Total Staff</div>
         </div>
         <div className="stat-box">
-          <div className="stat-value">{sales.length}</div>
-          <div className="stat-label">Active Locations</div>
+          <div className="stat-value">7</div>
+          <div className="stat-label">Locations</div>
         </div>
       </div>
 
