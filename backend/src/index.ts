@@ -3,7 +3,6 @@ import express from 'express';
 import cors from 'cors';
 import { logger } from './middleware/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import { seed } from './lib/seed.js';
 
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
@@ -116,15 +115,6 @@ logRegisteredRouteHandlers();
 
 app.use(errorHandler);
 
-app.listen(PORT, async () => {
-  if (process.env.NODE_ENV !== 'production') {
-    try {
-      await seed();
-    } catch (error) {
-      console.error('[Seeder] Failed to seed data.', error);
-    }
-  } else {
-    console.log('[Seeder] Skipped in production environment.');
-  }
+app.listen(PORT, () => {
   console.log(`Steakz API running on http://localhost:${PORT}`);
 });

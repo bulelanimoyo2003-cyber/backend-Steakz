@@ -6,6 +6,7 @@
     "dev": "nodemon --watch src --exec tsx src/index.ts",
     "build": "prisma generate && tsc --build && node scripts/prepare-generated-client.cjs",
     "start": "node dist/index.js",
+    "db:seed": "tsx scripts/seed.ts",
     "test:e2e:postgresql": "node scripts/e2e_postgresql_delivery_test.cjs",
     "prisma:generate": "prisma generate"
   },
