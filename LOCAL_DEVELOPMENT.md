@@ -2,7 +2,7 @@
 
 The presentation app is this checkout at `C:\Users\DELL\Downloads\Steakz`, branch `main`. Its frontend proxies `/api` to the root SQLite API in `src/` on port 3001. The root `.env` points to the persistent local database at `C:\Users\DELL\Downloads\Steakz\backend\prisma\dev.db`. That file is intentionally untracked and must stay local.
 
-The nested `backend/` directory is a separate PostgreSQL application with its own `.env`, Prisma schema, and generated client. Both API projects have used port 3001, so starting the nested backend instead of the root API can make the same frontend appear to use another database. Do not use the nested backend for local presentation work. The root and frontend development servers do not seed, reset, or clean the database on startup.
+The nested `backend/` directory contains the separate PostgreSQL application source, `.env`, Prisma schema, and generated client. Its `npm run dev` is intentionally wired to the root local SQLite launcher; the PostgreSQL source/build/start and database scripts remain separate. Do not run those PostgreSQL entrypoints for local presentation work. The root and frontend development servers do not seed, reset, or clean the database on startup.
 
 The local AppData delivery-preview SQLite files are preserved snapshots, not the live presentation database. They contain different account, branch-assignment, and order records; do not copy one over the project database. Explicit setup commands are guarded to modify only the root project database.
 
@@ -23,9 +23,23 @@ cd "C:\Users\DELL\Downloads\Steakz"
 npm run dev
 ```
 
-The root `dev` script runs the checked-in launcher. The launcher resolves the root `.env` database URL and verifies it points to this checkout's canonical database, refuses to create a missing database, checks that ports 3001 and 5173 are free, starts the root API and Vite frontend in separate PowerShell consoles, and verifies that the listeners belong to those launched processes. The API console runs `dev:api` so it cannot recursively invoke the full app launcher. It clears inherited database/port overrides in the child consoles so the root `.env` is used. It never silently switches to another port if one is occupied. Open <http://127.0.0.1:5173>; check the API at <http://127.0.0.1:3001/api/health>. Leave both service consoles running while using the app.
+The root `dev` script runs the checked-in launcher. The launcher resolves the root `.env` database URL and verifies it points to this checkout's canonical database, refuses to create a missing database, and starts the root API and Vite frontend in separate PowerShell consoles when they are not already running. It reuses only healthy services whose process trees are tied to this checkout's launcher; an unknown process on either port is reported by port and PID and is never stopped automatically. The API console runs `dev:api` so it cannot recursively invoke the full app launcher. It clears inherited database/port overrides in the child consoles so the root `.env` is used. It never silently switches ports. Open <http://127.0.0.1:5173>; check the API at <http://127.0.0.1:3001/api/health>. Leave both service consoles running while using the app.
 
-If the app is already running after reopening VS Code, open the URL above instead of starting a second copy. To restart it, press Ctrl+C in both service consoles and wait for ports 3001 and 5173 to be released, then rerun the launcher. If a port is reported occupied, inspect the listed PID before stopping anything. Do not start the app on Vite's fallback port 5174; the supported URL is always `http://127.0.0.1:5173`.
+For two-terminal startup, open one PowerShell terminal in the project root and run:
+
+```powershell
+cd backend
+npm run dev
+```
+
+In a second terminal, run:
+
+```powershell
+cd frontend
+npm run dev
+```
+
+These package commands delegate to the same guarded launcher modes as the root command. Repeating a command reuses its already healthy local service instead of starting a duplicate. Press Ctrl+C in each service terminal to stop it; wait for its port to be released before starting it again. If a port is reported occupied, inspect the listed PID and stop only a confirmed stale Steakz process from its terminal. Do not start the app on Vite's fallback port 5174; the supported URL is always `http://127.0.0.1:5173`.
 
 For a fresh checkout only, copy `.env.example` to `.env`. Its relative SQLite URL resolves to the canonical `backend\prisma\dev.db` from `prisma\schema.prisma`. Do not copy the example over an existing `.env` or use the nested PostgreSQL URL.
 

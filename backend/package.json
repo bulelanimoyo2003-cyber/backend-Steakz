@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "nodemon --watch src --exec tsx src/index.ts",
+    "dev": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ..\\start-steakz.ps1 -Mode Backend",
     "build": "prisma generate && tsc --build && node scripts/prepare-generated-client.cjs",
     "start": "node dist/index.js",
     "db:seed": "tsx scripts/seed.ts",
