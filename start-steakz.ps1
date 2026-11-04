@@ -9,7 +9,7 @@ $root = $PSScriptRoot
 if ($Mode -eq 'Backend') {
   Remove-Item Env:DATABASE_URL, Env:PORT, Env:NODE_ENV, Env:FRONTEND_URL, Env:JWT_SECRET, Env:ADMIN_EMAIL, Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue
   Set-Location -LiteralPath $root
-  npm.cmd run dev
+  npm.cmd run dev:api
   exit $LASTEXITCODE
 }
 

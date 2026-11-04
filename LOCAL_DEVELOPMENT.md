@@ -16,14 +16,14 @@ cd "C:\Users\DELL\Downloads\Steakz"
 git branch --show-current
 ```
 
-The branch should be `main`. Start both services from the project root using the checked-in launcher:
+The branch should be `main`. Start both services from the project root with one command:
 
 ```powershell
 cd "C:\Users\DELL\Downloads\Steakz"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-steakz.ps1
+npm run dev
 ```
 
-The launcher resolves the root `.env` database URL and verifies it points to this checkout's canonical database, refuses to create a missing database, checks that ports 3001 and 5173 are free, starts the root API and Vite frontend in separate PowerShell consoles, and verifies that the listeners belong to those launched processes. It clears inherited database/port overrides in the child consoles so the root `.env` is used. It never silently switches to another port if one is occupied. Open <http://127.0.0.1:5173>; check the API at <http://127.0.0.1:3001/api/health>. Leave both service consoles running while using the app.
+The root `dev` script runs the checked-in launcher. The launcher resolves the root `.env` database URL and verifies it points to this checkout's canonical database, refuses to create a missing database, checks that ports 3001 and 5173 are free, starts the root API and Vite frontend in separate PowerShell consoles, and verifies that the listeners belong to those launched processes. The API console runs `dev:api` so it cannot recursively invoke the full app launcher. It clears inherited database/port overrides in the child consoles so the root `.env` is used. It never silently switches to another port if one is occupied. Open <http://127.0.0.1:5173>; check the API at <http://127.0.0.1:3001/api/health>. Leave both service consoles running while using the app.
 
 If the app is already running after reopening VS Code, open the URL above instead of starting a second copy. To restart it, press Ctrl+C in both service consoles and wait for ports 3001 and 5173 to be released, then rerun the launcher. If a port is reported occupied, inspect the listed PID before stopping anything. Do not start the app on Vite's fallback port 5174; the supported URL is always `http://127.0.0.1:5173`.
 
