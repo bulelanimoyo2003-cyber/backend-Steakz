@@ -1,28 +1,44 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../api/axios';
+import { describeReceiptFailure } from './receiptAccess';
 
 export default function ReceiptPage() {
   const { orderId } = useParams();
   const [receipt, setReceipt] = useState<any | null>(null);
   const [error, setError] = useState('');
+  const [paymentRequired, setPaymentRequired] = useState(false);
   const [loading, setLoading] = useState(true);
+  const requestSequence = useRef(0);
 
   const load = useCallback(async () => {
-    if (!orderId) return;
+    if (!orderId) {
+      setLoading(false);
+      return;
+    }
+    const requestId = ++requestSequence.current;
     try {
       const resp = await api.get(`/customer/receipt/${orderId}`);
+      if (requestId !== requestSequence.current) return;
       setReceipt(resp.data);
       setError('');
-    } catch (e: any) {
-      const msg = e?.response?.data?.error ?? 'Failed to load receipt.';
-      setError(msg);
+      setPaymentRequired(false);
+    } catch (requestError: unknown) {
+      if (requestId !== requestSequence.current) return;
+      const failure = describeReceiptFailure(requestError);
+      setReceipt(null);
+      setPaymentRequired(failure.kind === 'payment-required');
+      setError(failure.kind === 'error' ? failure.message : '');
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current) setLoading(false);
     }
   }, [orderId]);
 
   useEffect(() => {
+    setReceipt(null);
+    setError('');
+    setPaymentRequired(false);
+    setLoading(true);
     void load();
     const interval = setInterval(() => void load(), 10000);
     window.addEventListener('focus', load);
@@ -42,9 +58,18 @@ export default function ReceiptPage() {
   }
 
   if (loading && !receipt) return <div className="page">Loading receipt…</div>;
+  if (paymentRequired) return (
+    <div className="page">
+      <div className="alert alert-error" role="alert">
+        Payment is required before this receipt is available. The receipt will unlock after your payment is confirmed.
+      </div>
+      <Link className="btn btn-primary" to={`/orders/${orderId}`}>Pay for order</Link>
+      <Link className="btn btn-outline" to="/customer">Order history</Link>
+    </div>
+  );
   if (error) return (
     <div className="page">
-      <div className="alert alert-error">{error}</div>
+      <div className="alert alert-error" role="alert">{error}</div>
       <Link className="btn btn-primary" to={`/orders/${orderId}`}>View order details</Link>
     </div>
   );

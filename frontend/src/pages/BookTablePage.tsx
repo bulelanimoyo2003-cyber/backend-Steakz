@@ -22,6 +22,7 @@ export default function BookTablePage() {
   const [date, setDate] = useState('');
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     api.get<Branch[]>('/public/branches').then((response) => setBranches(response.data)).catch(() => setError('Unable to load locations.'));
@@ -58,6 +59,7 @@ export default function BookTablePage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
     setError('');
     setSuccess('');
 
@@ -67,18 +69,24 @@ export default function BookTablePage() {
     }
 
     try {
+      setSubmitting(true);
       await api.post('/customer/bookings', {
         tableId: Number(tableId),
         guestCount: Number(guestCount),
         date,
       });
-      setSuccess('Reservation confirmed. View it in your dashboard.');
+      const reservedTableId = Number(tableId);
+      setTables((previous) => previous.filter((table) => table.id !== reservedTableId));
+      setTableId('');
+      setSuccess('Reservation request submitted. It will remain pending until staff confirms it.');
     } catch (err: unknown) {
       const message =
         typeof err === 'object' && err !== null && 'response' in err && (err as any).response?.data?.error
           ? (err as any).response.data.error
           : 'Reservation failed.';
       setError(message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -129,8 +137,8 @@ export default function BookTablePage() {
               </div>
             </div>
 
-            <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: '0.25rem' }}>
-              Confirm Reservation
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: '0.25rem' }} disabled={submitting}>
+              {submitting ? 'Submitting reservation…' : 'Confirm Reservation'}
             </button>
           </form>
         </div>

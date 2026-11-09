@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getDineInBookingWindow, isDineInBookingEligible } from './dineInBooking.js';
+import { getBookingOverlapRange, getDineInBookingWindow, isDineInBookingEligible } from './dineInBooking.js';
 
 const bookingTime = new Date('2030-01-01T18:00:00.000Z');
 const now = bookingTime.getTime();
@@ -52,4 +52,11 @@ test('dining window configuration is explicit, validated, and supports zero earl
   }), { earlyWindowMinutes: 0, visitDurationMinutes: 90 });
   assert.throws(() => getDineInBookingWindow({ DINE_IN_BOOKING_EARLY_WINDOW_MINUTES: '-1' }), /nonnegative whole number/);
   assert.throws(() => getDineInBookingWindow({ DINE_IN_BOOKING_DURATION_MINUTES: '0' }), /positive whole number/);
+});
+
+test('reservation overlap ranges use the visit duration and exclude adjacent bookings', () => {
+  const range = getBookingOverlapRange(bookingTime, defaultWindow.visitDurationMinutes);
+  assert.equal(range.startsAfter.getTime(), now - 240 * 60_000);
+  assert.equal(range.startsBefore.getTime(), now + 240 * 60_000);
+  assert.throws(() => getBookingOverlapRange(new Date(Number.NaN)), /valid reservation time/);
 });

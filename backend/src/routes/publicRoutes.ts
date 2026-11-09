@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
+import { getBookingOverlapRange } from '../lib/dineInBooking.js';
 
 const router = Router();
 
@@ -15,7 +16,7 @@ router.get('/branches/:id', async (req: Request, res: Response) => {
     where: { id },
     include: {
       // Inactive locations remain available to staff for historical work, not to customers.
-      tables: { where: { isAvailable: true } },
+      tables: { where: { isAvailable: true, status: 'AVAILABLE' } },
       menuItems: { where: { isAvailable: true } },
     },
   });
@@ -28,18 +29,36 @@ router.get('/branches/:id', async (req: Request, res: Response) => {
 
 router.get('/tables/:id/availability', async (req: Request, res: Response) => {
   const id = Number(req.params.id);
-  const date = req.query.date as string;
-  if (!id || !date) {
+  const dateValue = req.query.date;
+  if (!Number.isInteger(id) || id <= 0 || typeof dateValue !== 'string' || !dateValue.trim()) {
     res.status(400).json({ error: 'tableId and date are required.' });
     return;
   }
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    res.status(400).json({ error: 'A valid reservation date and time is required.' });
+    return;
+  }
 
+  const table = await prisma.table.findUnique({
+    where: { id },
+    include: { branch: { select: { isActive: true } } },
+  });
+  if (!table || !table.branch.isActive) {
+    res.status(404).json({ error: 'This location is no longer active. Please select an active location.' });
+    return;
+  }
+  if (!table.isAvailable || table.status !== 'AVAILABLE') {
+    res.json({ available: false });
+    return;
+  }
+
+  const overlapRange = getBookingOverlapRange(date);
   const exists = await prisma.booking.findFirst({
     where: {
       tableId: id,
-      date: new Date(date),
+      date: { gt: overlapRange.startsAfter, lt: overlapRange.startsBefore },
       status: { in: ['PENDING', 'CONFIRMED'] },
-      table: { branch: { isActive: true } },
     },
   });
 

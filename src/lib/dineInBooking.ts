@@ -8,6 +8,11 @@ export interface DineInBookingCandidate {
   date: Date | string;
 }
 
+export interface BookingOverlapRange {
+  startsAfter: Date;
+  startsBefore: Date;
+}
+
 const MINUTE_IN_MS = 60_000;
 
 function readMinuteSetting(
@@ -49,4 +54,19 @@ export function isDineInBookingEligible(
   const earliestOrderTime = bookingTime - window.earlyWindowMinutes * MINUTE_IN_MS;
   const latestOrderTime = bookingTime + window.visitDurationMinutes * MINUTE_IN_MS;
   return now >= earliestOrderTime && now <= latestOrderTime;
+}
+
+export function getBookingOverlapRange(
+  reservationDate: Date,
+  visitDurationMinutes = getDineInBookingWindow().visitDurationMinutes,
+): BookingOverlapRange {
+  const reservationTime = reservationDate.getTime();
+  if (!Number.isFinite(reservationTime) || !Number.isSafeInteger(visitDurationMinutes) || visitDurationMinutes <= 0) {
+    throw new Error('A valid reservation time and positive visit duration are required.');
+  }
+  const durationMs = visitDurationMinutes * MINUTE_IN_MS;
+  return {
+    startsAfter: new Date(reservationTime - durationMs),
+    startsBefore: new Date(reservationTime + durationMs),
+  };
 }

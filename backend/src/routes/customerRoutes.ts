@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
 import { isSameCheckoutRequest, type CheckoutSnapshot } from '../lib/orderIdempotency.js';
-import { getDineInBookingWindow, isDineInBookingEligible } from '../lib/dineInBooking.js';
+import { getBookingOverlapRange, getDineInBookingWindow, isDineInBookingEligible } from '../lib/dineInBooking.js';
 import { calculateCheckoutAmounts, roundPrice } from '../lib/checkoutPricing.js';
 import { getStripeClient } from '../lib/stripe.js';
 
@@ -15,6 +15,7 @@ router.use(verifyToken, requireRole(['CUSTOMER']));
 
 class DeliveryUnavailableError extends Error {}
 class DineInBookingUnavailableError extends Error {}
+class BookingReservationConflictError extends Error {}
 
 router.get('/bookings', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
@@ -86,35 +87,40 @@ router.post('/bookings', async (req: Request, res: Response) => {
     return;
   }
 
-  const existingBooking = await prisma.booking.findFirst({
-    where: {
-      tableId,
-      date: reservationDate,
-      status: { in: ['PENDING', 'CONFIRMED'] },
-    },
-  });
+  const overlapRange = getBookingOverlapRange(reservationDate);
+  let booking;
+  try {
+    booking = await prisma.$transaction(async (transaction) => {
+      const reserved = await transaction.table.updateMany({
+        where: { id: tableId, isAvailable: true, status: 'AVAILABLE', branch: { isActive: true } },
+        data: { status: 'RESERVED' },
+      });
+      if (reserved.count !== 1) {
+        throw new BookingReservationConflictError('This table is no longer available.');
+      }
 
-  if (existingBooking) {
-    res.status(400).json({ error: 'This table is already reserved for the selected time. Please choose another table.' });
-    return;
-  }
+      const existingBooking = await transaction.booking.findFirst({
+        where: {
+          tableId,
+          date: { gt: overlapRange.startsAfter, lt: overlapRange.startsBefore },
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+      });
+      if (existingBooking) {
+        throw new BookingReservationConflictError('This table is already reserved for an overlapping time. Please choose another time or table.');
+      }
 
-  const booking = await prisma.$transaction(async (transaction) => {
-    const reserved = await transaction.table.updateMany({
-      where: { id: tableId, isAvailable: true, status: 'AVAILABLE', branch: { isActive: true } },
-      data: { status: 'RESERVED' },
+      return transaction.booking.create({
+        data: { customerId, tableId, guestCount, date: reservationDate },
+        include: { table: { include: { branch: { select: { id: true, name: true } } } } },
+      });
     });
-    if (reserved.count !== 1) {
-      return null;
+  } catch (error) {
+    if (error instanceof BookingReservationConflictError) {
+      res.status(409).json({ error: error.message });
+      return;
     }
-    return transaction.booking.create({
-      data: { customerId, tableId, guestCount, date: reservationDate },
-      include: { table: { include: { branch: { select: { id: true, name: true } } } } },
-    });
-  });
-  if (!booking) {
-    res.status(409).json({ error: 'This table is no longer available.' });
-    return;
+    throw error;
   }
 
   res.status(201).json(booking);
