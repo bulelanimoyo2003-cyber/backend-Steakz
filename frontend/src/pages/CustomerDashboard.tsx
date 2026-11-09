@@ -107,23 +107,6 @@ export default function CustomerDashboard() {
     }
   }
 
-  async function retryPayment(orderId: number) {
-    setError('');
-    try {
-      const { data } = await api.post(`/customer/orders/${orderId}/checkout`);
-      if (data.checkoutUrl) {
-        window.location.assign(data.checkoutUrl);
-        return;
-      }
-      window.location.assign(`/payment-result?status=success&orderId=${orderId}`);
-    } catch (requestError: unknown) {
-      const message = typeof requestError === 'object' && requestError !== null
-        ? (requestError as { response?: { data?: { error?: string } } }).response?.data?.error
-        : undefined;
-      setError(message ?? 'Unable to restart online payment. Please try again.');
-    }
-  }
-
   function paymentLabel(order: Pick<Order, 'paymentStatus' | 'paymentMethod'>) {
     if (order.paymentStatus === 'PAID') return 'Payment successful';
     if (order.paymentStatus === 'FAILED') return 'Payment failed';
@@ -245,14 +228,12 @@ export default function CustomerDashboard() {
                 </div>
               )}
               <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span className="price">€{order.total.toFixed(2)}</span>
+                <span className="price">{order.paymentStatus === 'PAID' ? 'Total' : 'Amount due'}: €{order.total.toFixed(2)}</span>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  {order.paymentMethod === 'STRIPE' && order.paymentStatus !== 'PAID' && (
-                    <button className="btn btn-sm btn-outline" type="button" onClick={() => void retryPayment(order.id)}>
-                      {order.paymentStatus === 'PENDING' ? 'Continue online payment' : 'Retry online payment (test)'}
-                    </button>
-                  )}
-                  <Link className="btn btn-sm btn-primary" to={`/receipt/${order.id}`}>View Receipt</Link>
+                  <Link className="btn btn-sm btn-outline" to={`/orders/${order.id}`}>Order details</Link>
+                  {order.paymentStatus === 'PAID'
+                    ? <Link className="btn btn-sm btn-primary" to={`/receipt/${order.id}`}>View receipt</Link>
+                    : <Link className="btn btn-sm btn-primary" to={`/orders/${order.id}`}>Pay for order</Link>}
                 </div>
               </div>
             </div>
@@ -311,9 +292,11 @@ export default function CustomerDashboard() {
                         : 'Waiting for driver'
                   : '—'}</td>
                 <td>
-                  <Link className="btn btn-sm btn-primary" to={`/receipt/${receipt.orderId}`}>
-                    Open Receipt
-                  </Link>
+                  {receipt.paymentStatus === 'PAID' && (
+                    <Link className="btn btn-sm btn-primary" to={`/receipt/${receipt.orderId}`}>
+                      View receipt
+                    </Link>
+                  )}
                 </td>
               </tr>
             ))}

@@ -360,31 +360,10 @@ export default function MenuPage() {
         headers: { 'Idempotency-Key': checkoutRequestRef.current.key },
       });
       const order = resp.data as any;
-      if (paymentMethod === 'STRIPE') {
-        const payment = await api.post(`/customer/orders/${order.id}/checkout`);
-        if (payment.data.checkoutUrl) {
-          setCart([]);
-          checkoutRequestRef.current = null;
-          sessionStorage.removeItem('steakz-checkout-idempotency');
-          window.location.assign(payment.data.checkoutUrl);
-          return order;
-        }
-        if (payment.data.awaitingWebhook || payment.data.paymentStatus === 'PAID') {
-          navigate(`/payment-result?status=success&orderId=${order.id}`);
-          return order;
-        }
-      }
       setCart([]);
       checkoutRequestRef.current = null;
       sessionStorage.removeItem('steakz-checkout-idempotency');
-      setNotice({
-        type: 'success',
-        text: paymentMethod === 'CASH'
-          ? 'Order placed. Payment is pending until an authorised cashier confirms your cash payment.'
-          : orderType === 'DELIVERY'
-            ? 'Delivery order placed. Track its progress from your customer dashboard.'
-            : 'Order created; payment status is available in your account.',
-      });
+      navigate(`/orders/${order.id}`);
       return order;
     } catch (e: any) {
       console.error('[Checkout] Error', e);

@@ -19,6 +19,7 @@ import NotFoundPage from './pages/NotFoundPage';
 import ReceiptPage from './pages/ReceiptPage';
 import DeliveryDriverDashboard from './pages/DeliveryDriverDashboard';
 import PaymentResultPage from './pages/PaymentResultPage';
+import CustomerOrderPage from './pages/CustomerOrderPage';
 
 export default function App() {
   return (
@@ -99,6 +100,11 @@ export default function App() {
           <Route path="/receipt/:orderId" element={
             <ProtectedRoute allowedRoles={["CUSTOMER"]}>
               <ReceiptPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/orders/:orderId" element={
+            <ProtectedRoute allowedRoles={['CUSTOMER']}>
+              <CustomerOrderPage />
             </ProtectedRoute>
           } />
           <Route path="/payment-result" element={

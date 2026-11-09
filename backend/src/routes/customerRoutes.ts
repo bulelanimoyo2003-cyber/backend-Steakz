@@ -153,6 +153,27 @@ router.get('/orders', async (req: Request, res: Response) => {
   res.json(orders);
 });
 
+router.get('/orders/:id', async (req: Request, res: Response) => {
+  const orderId = Number(req.params.id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    res.status(400).json({ error: 'Invalid order id.' });
+    return;
+  }
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, customerId: req.user!.id },
+    include: {
+      items: { include: { menuItem: { select: { name: true } } } },
+      branch: { select: { name: true } },
+      assignedDriver: { select: { name: true } },
+    },
+  });
+  if (!order) {
+    res.status(404).json({ error: 'Order not found.' });
+    return;
+  }
+  res.set('Cache-Control', 'no-store').json(order);
+});
+
 router.post('/orders', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
   const checkoutRequestId = req.get('Idempotency-Key');
@@ -481,7 +502,7 @@ function buildReceiptPayload(order: any) {
 router.get('/receipts', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
   const paidOrders = await prisma.order.findMany({
-    where: { customerId },
+    where: { customerId, paymentStatus: 'PAID' },
     include: { branch: { select: { name: true } }, assignedDriver: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -504,7 +525,7 @@ router.get('/receipts', async (req: Request, res: Response) => {
     deliveredAt: order.deliveredAt?.toISOString() ?? null,
   }));
 
-  res.json(receipts);
+  res.set('Cache-Control', 'no-store').json(receipts);
 });
 
 router.get('/receipt/:orderId', async (req: Request, res: Response) => {
@@ -535,8 +556,12 @@ router.get('/receipt/:orderId', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Unauthorized access to this receipt.' });
       return;
     }
+    if (order.paymentStatus !== 'PAID') {
+      res.status(409).json({ error: 'A receipt is available after payment is confirmed.' });
+      return;
+    }
 
-    res.json(buildReceiptPayload(order));
+    res.set('Cache-Control', 'no-store').json(buildReceiptPayload(order));
   } catch (error) {
     console.error('[Customer RECEIPT] error', error);
     res.status(500).json({ error: 'Failed to fetch receipt.' });

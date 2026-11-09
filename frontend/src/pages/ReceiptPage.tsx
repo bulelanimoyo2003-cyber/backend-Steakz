@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import api from '../api/axios';
 
 export default function ReceiptPage() {
@@ -42,7 +42,12 @@ export default function ReceiptPage() {
   }
 
   if (loading && !receipt) return <div className="page">Loading receipt…</div>;
-  if (error) return <div className="page"><div className="alert alert-error">{error}</div></div>;
+  if (error) return (
+    <div className="page">
+      <div className="alert alert-error">{error}</div>
+      <Link className="btn btn-primary" to={`/orders/${orderId}`}>View order details</Link>
+    </div>
+  );
   if (!receipt) return <div className="page"><div className="alert alert-error">Receipt unavailable.</div></div>;
 
   return (

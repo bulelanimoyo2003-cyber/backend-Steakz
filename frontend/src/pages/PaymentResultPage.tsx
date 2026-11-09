@@ -100,6 +100,7 @@ export default function PaymentResultPage() {
       )}
       <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
         <Link className="btn btn-primary" to="/customer">Order history</Link>
+        {order && <Link className="btn btn-outline" to={`/orders/${order.id}`}>Order details</Link>}
         {order?.paymentStatus === 'PAID' && (
           <Link className="btn btn-outline" to={`/receipt/${order.id}`}>Open receipt</Link>
         )}
