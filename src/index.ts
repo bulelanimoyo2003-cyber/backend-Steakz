@@ -12,6 +12,8 @@ import branchManagerRoutes from './routes/branchManagerRoutes.js';
 import chefRoutes from './routes/chefRoutes.js';
 import cashierRoutes from './routes/cashierRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
+import customerPaymentRoutes from './routes/customerPaymentRoutes.js';
+import stripeWebhookRoutes from './routes/stripeWebhookRoutes.js';
 import menuRoutes from './routes/menuRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import deliveryManagementRoutes from './routes/deliveryManagementRoutes.js';
@@ -56,8 +58,10 @@ if (!process.env.FRONTEND_URL) {
 }
 
 app.use(cors(corsOptions));
-app.use(express.json());
 app.use(logger);
+
+app.post('/api/payments/stripe/webhook', express.raw({ type: 'application/json', limit: '1mb' }), stripeWebhookRoutes);
+app.use(express.json());
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
@@ -65,6 +69,7 @@ app.use('/api/hq', hqRoutes);
 app.use('/api/branch-manager', branchManagerRoutes);
 app.use('/api/chef', chefRoutes);
 app.use('/api/cashier', cashierRoutes);
+app.use('/api/customer', customerPaymentRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/menu', menuRoutes);
 app.use('/api/public', publicRoutes);

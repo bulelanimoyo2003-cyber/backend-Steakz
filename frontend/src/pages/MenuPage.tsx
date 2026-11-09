@@ -27,6 +27,26 @@ interface EligibleBooking {
   table: { tableNumber: number; branch: { name: string } };
 }
 
+interface PaymentMethodOption {
+  id: 'CASH' | 'STRIPE';
+  label: string;
+}
+
+interface CheckoutQuote {
+  subtotal: number;
+  discountTotal: number;
+  deliveryFee: number;
+  total: number;
+  currency: string;
+  pricingNote: string;
+  fingerprint: string;
+}
+
+async function hashCheckoutFingerprint(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export default function MenuPage() {
   const { user } = useAuth();
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -43,6 +63,13 @@ export default function MenuPage() {
   const [bookingLoadError, setBookingLoadError] = useState(false);
   const [bookingLoadAttempt, setBookingLoadAttempt] = useState(0);
   const [loadingBookings, setLoadingBookings] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodOption[]>([
+    { id: 'CASH', label: 'Cash at the cashier' },
+  ]);
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'STRIPE'>('CASH');
+  const [checkoutQuote, setCheckoutQuote] = useState<CheckoutQuote | null>(null);
+  const [quoteError, setQuoteError] = useState('');
+  const [quoteAttempt, setQuoteAttempt] = useState(0);
   const [recipientName, setRecipientName] = useState('');
   const [recipientPhone, setRecipientPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
@@ -51,6 +78,51 @@ export default function MenuPage() {
   const checkoutRequestRef = useRef<{ fingerprint: string; key: string } | null>(null);
   const menuRequest = useRef({ id: 0, branchId: 0 });
   const navigate = useNavigate();
+  const quoteFingerprint = JSON.stringify({
+    branchId: selectedId,
+    orderType,
+    items: cart.map((entry) => ({ menuItemId: entry.item.id, quantity: entry.quantity })),
+  });
+
+  useEffect(() => {
+    let active = true;
+    if (user?.role !== 'CUSTOMER') return () => { active = false; };
+    api.get<{ methods: PaymentMethodOption[] }>('/customer/payment-methods')
+      .then(({ data }) => {
+        if (!active) return;
+        setPaymentMethods(data.methods);
+        if (!data.methods.some((method) => method.id === paymentMethod)) setPaymentMethod('CASH');
+      })
+      .catch(() => {
+        if (active) setNotice({ type: 'error', text: 'Unable to load payment options. Please refresh before checking out.' });
+      });
+    return () => { active = false; };
+  }, [user?.id, user?.role]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedId || cart.length === 0 || user?.role !== 'CUSTOMER') {
+      setCheckoutQuote(null);
+      setQuoteError('');
+      return () => { active = false; };
+    }
+    setCheckoutQuote(null);
+    setQuoteError('');
+    api.post('/customer/orders/quote', {
+      branchId: selectedId,
+      orderType,
+      items: cart.map((entry) => ({ menuItemId: entry.item.id, quantity: entry.quantity })),
+    }).then(({ data }) => {
+      if (active) setCheckoutQuote({ ...data, fingerprint: quoteFingerprint });
+    }).catch((quoteRequestError: unknown) => {
+      if (!active) return;
+      const message = typeof quoteRequestError === 'object' && quoteRequestError !== null
+        ? (quoteRequestError as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined;
+      setQuoteError(message ?? 'Unable to calculate the current total. Please try again.');
+    });
+    return () => { active = false; };
+  }, [quoteFingerprint, selectedId, orderType, user?.id, user?.role, quoteAttempt]);
 
   useEffect(() => {
     if (user?.name) setRecipientName((current) => current || user.name);
@@ -175,6 +247,7 @@ export default function MenuPage() {
   }
 
   const total = cart.reduce((s, it) => s + it.item.price * it.quantity, 0);
+  const currentQuote = checkoutQuote?.fingerprint === quoteFingerprint ? checkoutQuote : null;
 
   async function handleCheckout() {
     setNotice(null);
@@ -193,6 +266,10 @@ export default function MenuPage() {
     }
     if (cart.some((entry) => entry.branchId !== selectedId || entry.item.branchId !== selectedId)) {
       setNotice({ type: 'error', text: 'Your cart contains items from another location. Clear it or confirm a location switch before checking out.' });
+      return;
+    }
+    if (!currentQuote) {
+      setNotice({ type: 'info', text: quoteError || 'Calculating the current menu total. Please wait a moment.' });
       return;
     }
 
@@ -244,14 +321,14 @@ export default function MenuPage() {
 
     try {
       const items = cart.map((c) => ({ menuItemId: c.item.id, quantity: c.quantity }));
-      let payload: Record<string, unknown> = { orderType, branchId: selectedId, items };
+      let payload: Record<string, unknown> = { orderType, branchId: selectedId, items, paymentMethod };
       if (orderType === 'DINE_IN') {
         const booking = eligibleBookings.find((candidate) => candidate.id === Number(selectedBookingId));
         if (!booking) {
           setNotice({ type: 'error', text: 'A confirmed booking is required to dine in. Please reserve a table first.' });
           return;
         }
-        payload = { orderType, branchId: selectedId, bookingId: booking.id, items };
+        payload = { orderType, branchId: selectedId, bookingId: booking.id, items, paymentMethod };
       } else if (orderType === 'DELIVERY') {
         payload = {
           ...payload,
@@ -262,22 +339,51 @@ export default function MenuPage() {
         };
       }
 
-      const fingerprint = JSON.stringify(payload);
+      const fingerprint = await hashCheckoutFingerprint(JSON.stringify({ customerId: user.id, ...payload }));
       if (checkoutRequestRef.current?.fingerprint !== fingerprint) {
-        checkoutRequestRef.current = { fingerprint, key: crypto.randomUUID() };
+        let saved: { fingerprint?: string; key?: string } | null = null;
+        try {
+          saved = JSON.parse(sessionStorage.getItem('steakz-checkout-idempotency') ?? 'null');
+        } catch {
+          saved = null;
+        }
+        checkoutRequestRef.current = {
+          fingerprint,
+          key: saved?.fingerprint === fingerprint && typeof saved.key === 'string'
+            ? saved.key
+            : crypto.randomUUID(),
+        };
       }
+      sessionStorage.setItem('steakz-checkout-idempotency', JSON.stringify(checkoutRequestRef.current));
 
       const resp = await api.post('/customer/orders', payload, {
         headers: { 'Idempotency-Key': checkoutRequestRef.current.key },
       });
       const order = resp.data as any;
+      if (paymentMethod === 'STRIPE') {
+        const payment = await api.post(`/customer/orders/${order.id}/checkout`);
+        if (payment.data.checkoutUrl) {
+          setCart([]);
+          checkoutRequestRef.current = null;
+          sessionStorage.removeItem('steakz-checkout-idempotency');
+          window.location.assign(payment.data.checkoutUrl);
+          return order;
+        }
+        if (payment.data.awaitingWebhook || payment.data.paymentStatus === 'PAID') {
+          navigate(`/payment-result?status=success&orderId=${order.id}`);
+          return order;
+        }
+      }
       setCart([]);
       checkoutRequestRef.current = null;
+      sessionStorage.removeItem('steakz-checkout-idempotency');
       setNotice({
         type: 'success',
-        text: orderType === 'DELIVERY'
-          ? 'Delivery order placed. Track its progress from your customer dashboard.'
-          : 'Order created successfully. Please pay at the cashier to receive your receipt.',
+        text: paymentMethod === 'CASH'
+          ? 'Order placed. Payment is pending until an authorised cashier confirms your cash payment.'
+          : orderType === 'DELIVERY'
+            ? 'Delivery order placed. Track its progress from your customer dashboard.'
+            : 'Order created; payment status is available in your account.',
       });
       return order;
     } catch (e: any) {
@@ -342,6 +448,21 @@ export default function MenuPage() {
               <option value="COLLECTION">Collection</option>
               <option value="DELIVERY">Delivery</option>
             </select>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="payment-method">Payment method</label>
+            <select id="payment-method" value={paymentMethod} onChange={(event) => {
+              checkoutRequestRef.current = null;
+              setPaymentMethod(event.target.value as 'CASH' | 'STRIPE');
+            }}>
+              {paymentMethods.map((method) => (
+                <option key={method.id} value={method.id}>{method.label}</option>
+              ))}
+            </select>
+            {paymentMethod === 'STRIPE' && (
+              <small>Test payment: card details are entered only on Stripe’s hosted checkout page.</small>
+            )}
           </div>
 
           {orderType === 'DINE_IN' && user?.role === 'CUSTOMER' && selectedId !== null && (
@@ -439,9 +560,34 @@ export default function MenuPage() {
             ))}
           </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.75rem' }}>
-            <div style={{ fontWeight: 700 }}>Total</div>
-            <div style={{ fontFamily: 'Playfair Display, serif', fontSize: '1.05rem', color: 'var(--cognac-light)' }}>€{total.toFixed(2)}</div>
+          <div style={{ marginTop: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Subtotal</span>
+              <span>{currentQuote ? `€${currentQuote.subtotal.toFixed(2)}` : `€${total.toFixed(2)}`}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Discount</span><span>−€{(currentQuote?.discountTotal ?? 0).toFixed(2)}</span>
+            </div>
+            {orderType === 'DELIVERY' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Delivery charge</span><span>€{(currentQuote?.deliveryFee ?? 0).toFixed(2)}</span>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginTop: '0.35rem' }}>
+              <span>Total</span>
+              <span style={{ fontFamily: 'Playfair Display, serif', color: 'var(--cognac-light)' }}>
+                {currentQuote ? `€${currentQuote.total.toFixed(2)}` : 'Calculating…'}
+              </span>
+            </div>
+            {quoteError && (
+              <div className="alert alert-error" role="alert">
+                {quoteError}{' '}
+                <button type="button" className="btn btn-sm" onClick={() => setQuoteAttempt((attempt) => attempt + 1)}>
+                  Retry total
+                </button>
+              </div>
+            )}
+            {currentQuote && <small>{currentQuote.pricingNote}</small>}
           </div>
 
           <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
@@ -450,6 +596,7 @@ export default function MenuPage() {
               type="button"
               onClick={handleCheckout}
               disabled={cart.length === 0 || checkoutInProgress
+                || !currentQuote
                 || (orderType === 'DINE_IN'
                   && (loadingBookings || bookingLoadError || !selectedBookingId
                     || !eligibleBookings.some((booking) => booking.id === Number(selectedBookingId))))

@@ -119,3 +119,54 @@ The test creates temporary users, menu items, tables, bookings and orders, and i
 - Deploy the frontend separately and configure production CORS.
 - Investigate the recorded npm audit vulnerabilities.
 - Perform production smoke tests.
+
+## Customer payment setup (test mode)
+
+The customer checkout supports cash at the selected branch's cashier and
+Stripe-hosted card checkout in test mode. Card entry remains on Stripe Checkout.
+No live Stripe key is accepted by the application.
+
+Configure these **backend service** environment variables in Render:
+
+- `STRIPE_SECRET_KEY`: Stripe test secret key (`sk_test_...`).
+- `STRIPE_WEBHOOK_SECRET`: signing secret (`whsec_...`) for the production
+  Render webhook endpoint configured in Stripe test mode.
+- `FRONTEND_URL`: exact deployed frontend HTTPS origin (also used for Checkout
+  return links).
+
+Do not set either Stripe key on the frontend/static site. Keep both out of logs,
+Git, and support tickets. The customer checkout offers the card option only
+when both Stripe settings are configured. Enable the **Card** payment method
+for the account in Stripe Dashboard (test mode).
+
+Configure a Stripe webhook destination pointing to:
+
+`https://<Render-backend-host>/api/payments/stripe/webhook`
+
+Subscribe to `checkout.session.completed`,
+`checkout.session.async_payment_succeeded`,
+`checkout.session.async_payment_failed`, `checkout.session.expired`,
+`payment_intent.succeeded`, and `payment_intent.payment_failed`. Copy the
+endpoint's signing secret to `STRIPE_WEBHOOK_SECRET`. Stripe's signed event,
+order reference, attempt ID, amount, and currency are validated server-side;
+the success redirect does not record payment.
+
+### PostgreSQL deployment migration
+
+The additive migration is
+`backend/prisma/migrations/20261109190000_add_customer_payments/migration.sql`.
+Before deploying, take and verify a Render PostgreSQL backup and confirm the
+existing database migration history matches this repository's PostgreSQL
+migration baseline. Deploy with the backend service build/start commands already
+documented above; `backend/Dockerfile` runs `prisma migrate deploy` before
+starting the server. For a non-Docker Render service, run
+`npx prisma migrate deploy --schema prisma/schema.prisma` from the backend
+service root as a pre-deploy step (or from a one-off shell after the verified
+backup). Do not run the SQLite migration against PostgreSQL, and do not reset or
+seed the database. Verify existing orders, bookings, accounts, and payment
+states after migration.
+
+The canonical local SQLite database was backed up before applying the additive
+SQLite migration. Existing local startup commands remain unchanged. For a
+fresh local checkout only, apply the root SQLite migrations before explicitly
+seeding; never seed an existing database.

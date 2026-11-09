@@ -67,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     function handleSessionExpired() {
       localStorage.removeItem('steakz_token');
       localStorage.removeItem('steakz_user');
+      sessionStorage.removeItem('steakz-checkout-idempotency');
       setToken(null);
       setUser(null);
     }
@@ -76,6 +77,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   function login(t: string, u: AuthUser) {
+    const previousUser = safeParseJson<AuthUser>(localStorage.getItem('steakz_user'));
+    if (previousUser?.id !== u.id) sessionStorage.removeItem('steakz-checkout-idempotency');
     localStorage.setItem('steakz_token', t);
     localStorage.setItem('steakz_user', JSON.stringify(u));
     setToken(t);
@@ -85,6 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function logout() {
     localStorage.removeItem('steakz_token');
     localStorage.removeItem('steakz_user');
+    sessionStorage.removeItem('steakz-checkout-idempotency');
     setToken(null);
     setUser(null);
   }

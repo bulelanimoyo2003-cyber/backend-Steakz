@@ -5,7 +5,8 @@ import { useAuth } from '../context/AuthContext';
 interface DeliveryOrder {
   id: number;
   status: string;
-  paymentStatus: 'UNPAID' | 'PAID';
+  paymentStatus: string;
+  paymentMethod?: 'CASH' | 'STRIPE' | null;
   deliveryStatus: string | null;
   recipientName: string | null;
   recipientPhone: string | null;
@@ -111,7 +112,10 @@ export default function DeliveryDriverDashboard() {
               Kitchen: {kitchenReady ? 'Ready for collection' : 'Waiting for kitchen'}
             </span>
             <span className={`badge ${paymentConfirmed ? 'badge-success' : 'badge-warning'}`}>
-              {paymentConfirmed ? 'Paid' : 'Awaiting payment confirmation from cashier'}
+              {paymentConfirmed ? 'Paid'
+                : order.paymentMethod === 'STRIPE'
+                  ? 'Awaiting verified online payment'
+                  : 'Awaiting payment confirmation from cashier'}
             </span>
             <span className={`badge badge-${(order.deliveryStatus ?? 'unassigned').toLowerCase()}`}>
               {isDelivered ? 'Delivered'
@@ -150,10 +154,10 @@ export default function DeliveryDriverDashboard() {
             {order.deliveryStatus === 'ASSIGNED' && (!kitchenReady || !paymentConfirmed) && (
               <span className="driver-waiting">
                 {!kitchenReady && !paymentConfirmed
-                  ? 'Waiting for kitchen preparation and cashier payment confirmation.'
+                  ? `Waiting for kitchen preparation and ${order.paymentMethod === 'STRIPE' ? 'verified online payment' : 'cashier payment confirmation'}.`
                   : !kitchenReady
                     ? 'Waiting for kitchen preparation before collection.'
-                    : 'Awaiting payment confirmation from cashier before collection.'}
+                    : `Awaiting ${order.paymentMethod === 'STRIPE' ? 'verified online payment' : 'cashier payment confirmation'} before collection.`}
               </span>
             )}
             {order.deliveryStatus === 'OUT_FOR_DELIVERY' && (

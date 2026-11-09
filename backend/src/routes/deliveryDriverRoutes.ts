@@ -27,6 +27,7 @@ const driverOrderSelect = {
   id: true,
   status: true,
   paymentStatus: true,
+  paymentMethod: true,
   orderType: true,
   deliveryStatus: true,
   assignedDriverId: true,
@@ -91,7 +92,9 @@ router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
   if (!canPickUpDelivery(order)) {
     const pending = [];
     if (order.status !== 'DONE') pending.push('the kitchen to finish preparation');
-    if (order.paymentStatus !== 'PAID') pending.push('the cashier to confirm payment');
+    if (order.paymentStatus !== 'PAID') {
+      pending.push(order.paymentMethod === 'STRIPE' ? 'verified online payment' : 'the cashier to confirm payment');
+    }
     res.status(409).json({
       error: `Delivery cannot be collected until ${pending.join(' and ')}.`,
     });

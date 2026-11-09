@@ -86,6 +86,20 @@ export default function ReceiptPage() {
             </tbody>
             <tfoot>
               <tr>
+                <td colSpan={3} style={{ textAlign: 'right', paddingTop: '0.5rem' }}>Subtotal</td>
+                <td style={{ textAlign: 'right', paddingTop: '0.5rem' }}>€{(receipt.subtotal ?? receipt.totalAmount).toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td colSpan={3} style={{ textAlign: 'right' }}>Discount</td>
+                <td style={{ textAlign: 'right' }}>−€{(receipt.discountTotal ?? 0).toFixed(2)}</td>
+              </tr>
+              {(receipt.deliveryFee ?? 0) > 0 && (
+                <tr>
+                  <td colSpan={3} style={{ textAlign: 'right' }}>Delivery charge</td>
+                  <td style={{ textAlign: 'right' }}>€{receipt.deliveryFee.toFixed(2)}</td>
+                </tr>
+              )}
+              <tr>
                 <td colSpan={3} style={{ textAlign: 'right', paddingTop: '0.75rem', fontWeight: 700 }}>Total</td>
                 <td style={{ textAlign: 'right', paddingTop: '0.75rem', fontWeight: 700 }}>€{receipt.totalAmount.toFixed(2)}</td>
               </tr>
@@ -93,7 +107,14 @@ export default function ReceiptPage() {
           </table>
 
           <div style={{ marginTop: '1rem' }}>
-            <div><strong>Payment status:</strong> {receipt.paymentStatus}</div>
+            <div><strong>Payment status:</strong> {receipt.paymentStatus === 'PAID' ? 'Successful'
+              : receipt.paymentStatus === 'FAILED' ? 'Failed'
+                : receipt.paymentStatus === 'CANCELLED' ? 'Cancelled'
+                  : receipt.paymentMethod === 'STRIPE' ? 'Pending'
+                    : 'Awaiting cashier payment confirmation'}</div>
+            <div><strong>Payment method:</strong> {receipt.paymentMethod === 'STRIPE'
+              ? 'Stripe hosted checkout (test mode)'
+              : 'Cash at the cashier'}</div>
             {receipt.cashierConfirmed && (
               <div><strong>Cashier confirmation:</strong> Confirmed{receipt.cashierConfirmedAt ? ` at ${new Date(receipt.cashierConfirmedAt).toLocaleString()}` : ''}</div>
             )}

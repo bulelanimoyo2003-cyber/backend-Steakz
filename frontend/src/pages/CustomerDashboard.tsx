@@ -30,6 +30,7 @@ interface Order {
   assignedDriver?: { id: number; name: string } | null;
   deliveredAt?: string | null;
   paymentStatus?: string;
+  paymentMethod?: string | null;
   createdAt: string;
   branch: { name: string };
   items: OrderItem[];
@@ -42,6 +43,7 @@ interface ReceiptSummary {
   dateTime: string;
   totalAmount: number;
   paymentStatus: string;
+  paymentMethod?: string | null;
   orderType: string;
   deliveryStatus: string | null;
   deliveredAt: string | null;
@@ -103,6 +105,31 @@ export default function CustomerDashboard() {
       setError('Unable to cancel reservation.');
       setSuccess('');
     }
+  }
+
+  async function retryPayment(orderId: number) {
+    setError('');
+    try {
+      const { data } = await api.post(`/customer/orders/${orderId}/checkout`);
+      if (data.checkoutUrl) {
+        window.location.assign(data.checkoutUrl);
+        return;
+      }
+      window.location.assign(`/payment-result?status=success&orderId=${orderId}`);
+    } catch (requestError: unknown) {
+      const message = typeof requestError === 'object' && requestError !== null
+        ? (requestError as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined;
+      setError(message ?? 'Unable to restart online payment. Please try again.');
+    }
+  }
+
+  function paymentLabel(order: Pick<Order, 'paymentStatus' | 'paymentMethod'>) {
+    if (order.paymentStatus === 'PAID') return 'Payment successful';
+    if (order.paymentStatus === 'FAILED') return 'Payment failed';
+    if (order.paymentStatus === 'CANCELLED') return 'Payment cancelled';
+    if (order.paymentMethod === 'STRIPE') return 'Payment pending';
+    return 'Awaiting cashier payment confirmation';
   }
 
   return (
@@ -192,7 +219,7 @@ export default function CustomerDashboard() {
                     Kitchen: {order.deliveryStatus === 'DELIVERED' ? 'DONE' : order.status}
                   </span>
                   <span className={`badge ${order.paymentStatus === 'PAID' ? 'badge-success' : 'badge-warning'}`}>
-                    {order.paymentStatus || 'UNPAID'}
+                    {paymentLabel(order)}
                   </span>
                 </div>
               </div>
@@ -204,7 +231,9 @@ export default function CustomerDashboard() {
               {order.orderType === 'DELIVERY' && (
                 <div className="customer-delivery-progress">
                   <strong>Delivery: {order.deliveryStatus === 'ASSIGNED'
-                    ? (order.status === 'DONE' || order.status === 'DELIVERED' ? 'Ready for pickup' : 'Driver assigned — awaiting preparation')
+                    ? (order.status === 'DONE' || order.status === 'DELIVERED'
+                      ? (order.paymentStatus === 'PAID' ? 'Ready for pickup' : 'Ready; awaiting payment confirmation')
+                      : 'Driver assigned — awaiting preparation')
                     : order.deliveryStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery'
                       : order.deliveryStatus === 'DELIVERED' ? 'Delivered'
                         : 'Waiting for driver assignment'}</strong>
@@ -217,11 +246,14 @@ export default function CustomerDashboard() {
               )}
               <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="price">€{order.total.toFixed(2)}</span>
-                {order.paymentStatus === 'PAID' && (
-                  <Link className="btn btn-sm btn-primary" to={`/receipt/${order.id}`}>
-                    View Receipt
-                  </Link>
-                )}
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {order.paymentMethod === 'STRIPE' && order.paymentStatus !== 'PAID' && (
+                    <button className="btn btn-sm btn-outline" type="button" onClick={() => void retryPayment(order.id)}>
+                      {order.paymentStatus === 'PENDING' ? 'Continue online payment' : 'Retry online payment (test)'}
+                    </button>
+                  )}
+                  <Link className="btn btn-sm btn-primary" to={`/receipt/${order.id}`}>View Receipt</Link>
+                </div>
               </div>
             </div>
           ))}
@@ -265,7 +297,11 @@ export default function CustomerDashboard() {
                 <td>€{receipt.totalAmount.toFixed(2)}</td>
                 <td>
                   <span className={`badge ${receipt.paymentStatus === 'PAID' ? 'badge-success' : 'badge-warning'}`}>
-                    {receipt.paymentStatus}
+                    {receipt.paymentStatus === 'PAID' ? 'Successful'
+                      : receipt.paymentStatus === 'FAILED' ? 'Failed'
+                        : receipt.paymentStatus === 'CANCELLED' ? 'Cancelled'
+                          : receipt.paymentMethod === 'STRIPE' ? 'Pending'
+                            : 'Awaiting cashier'}
                   </span>
                 </td>
                 <td>{receipt.orderType === 'DELIVERY'

@@ -9,6 +9,7 @@ export interface CheckoutSnapshot {
   branchId: number;
   bookingId: number | null;
   orderType: string;
+  paymentMethod?: string | null;
   recipientName: string | null;
   recipientPhone: string | null;
   deliveryAddress: string | null;
@@ -26,6 +27,7 @@ export function isSameCheckoutRequest(existing: CheckoutSnapshot, requested: Che
     || existing.branchId !== requested.branchId
     || existing.bookingId !== requested.bookingId
     || existing.orderType !== requested.orderType
+    || (existing.paymentMethod ?? 'CASH') !== (requested.paymentMethod ?? 'CASH')
     || existing.recipientName !== requested.recipientName
     || existing.recipientPhone !== requested.recipientPhone
     || existing.deliveryAddress !== requested.deliveryAddress

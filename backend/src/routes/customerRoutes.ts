@@ -5,6 +5,8 @@ import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
 import { isSameCheckoutRequest, type CheckoutSnapshot } from '../lib/orderIdempotency.js';
 import { getDineInBookingWindow, isDineInBookingEligible } from '../lib/dineInBooking.js';
+import { calculateCheckoutAmounts, roundPrice } from '../lib/checkoutPricing.js';
+import { getStripeClient } from '../lib/stripe.js';
 
 const require = createRequire(import.meta.url);
 const { Prisma } = require('../generated/prisma/index.js') as typeof import('../generated/prisma/index.js');
@@ -154,9 +156,9 @@ router.get('/orders', async (req: Request, res: Response) => {
 router.post('/orders', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
   const checkoutRequestId = req.get('Idempotency-Key');
-  if (checkoutRequestId !== undefined
-    && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(checkoutRequestId)) {
-    res.status(400).json({ error: 'Idempotency-Key must be a UUID.' });
+  if (!checkoutRequestId
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(checkoutRequestId)) {
+    res.status(400).json({ error: 'A UUID Idempotency-Key is required to prevent duplicate orders.' });
     return;
   }
   const {
@@ -164,6 +166,7 @@ router.post('/orders', async (req: Request, res: Response) => {
     branchId: requestedBranchId,
     items,
     orderType: requestedOrderType,
+    paymentMethod: requestedPaymentMethod,
     recipientName,
     recipientPhone,
     deliveryAddress,
@@ -172,6 +175,7 @@ router.post('/orders', async (req: Request, res: Response) => {
     bookingId?: number;
     branchId?: number;
     orderType?: string;
+    paymentMethod?: string;
     recipientName?: string;
     recipientPhone?: string;
     deliveryAddress?: string;
@@ -180,6 +184,15 @@ router.post('/orders', async (req: Request, res: Response) => {
   };
 
   const orderTypes = ['DINE_IN', 'COLLECTION', 'DELIVERY'] as const;
+  if (requestedPaymentMethod !== undefined && requestedPaymentMethod !== 'CASH' && requestedPaymentMethod !== 'STRIPE') {
+    res.status(400).json({ error: 'paymentMethod must be CASH or STRIPE.' });
+    return;
+  }
+  const paymentMethod = requestedPaymentMethod ?? 'CASH';
+  if (paymentMethod === 'STRIPE' && !getStripeClient()) {
+    res.status(503).json({ error: 'Online card payments are not configured. Choose cash at the cashier.' });
+    return;
+  }
   if (requestedOrderType !== undefined && !orderTypes.some((type) => type === requestedOrderType)) {
     res.status(400).json({ error: 'orderType must be DINE_IN, COLLECTION, or DELIVERY.' });
     return;
@@ -285,14 +298,21 @@ router.post('/orders', async (req: Request, res: Response) => {
     return;
   }
 
-  const priceMap = Object.fromEntries(menuItems.map((item: { id: number; price: number }) => [item.id, item.price]));
-  const total = items.reduce((sum, item) => sum + (priceMap[item.menuItemId] ?? 0) * item.quantity, 0);
+  const priceMap = Object.fromEntries(menuItems.map((item: { id: number; price: number }) => [
+    item.id,
+    roundPrice(item.price),
+  ]));
+  const amounts = calculateCheckoutAmounts(items.map((item) => ({
+    ...item,
+    price: priceMap[item.menuItemId] ?? 0,
+  })), orderType);
 
   const requestedCheckout: CheckoutSnapshot = {
     customerId,
     branchId: resolvedBranchId,
     bookingId: orderType === 'DINE_IN' ? bookingId ?? null : null,
     orderType,
+    paymentMethod,
     recipientName: deliveryDetails?.recipientName ?? null,
     recipientPhone: deliveryDetails?.recipientPhone ?? null,
     deliveryAddress: deliveryDetails?.deliveryAddress ?? null,
@@ -365,6 +385,7 @@ router.post('/orders', async (req: Request, res: Response) => {
           bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
           branchId: resolvedBranchId,
           orderType,
+          paymentMethod,
           checkoutRequestId,
           ...(orderType === 'DELIVERY'
             ? {
@@ -374,7 +395,11 @@ router.post('/orders', async (req: Request, res: Response) => {
             }
             : {}),
           ...deliveryDetails,
-          total,
+          subtotal: amounts.subtotal,
+          discountTotal: amounts.discountTotal,
+          deliveryFee: amounts.deliveryFee,
+          currency: amounts.currency,
+          total: amounts.total,
           items: {
             create: items.map((item) => ({
               menuItemId: item.menuItemId,
@@ -436,9 +461,13 @@ function buildReceiptPayload(order: any) {
       lineTotal: it.unitPrice * it.quantity,
     })),
     totalAmount: order.total,
-    paymentStatus: 'PAID',
-    // Historical records remain without a paidAt timestamp because their original payment time is unknown.
-    cashierConfirmed: order.paymentStatus === 'PAID',
+    subtotal: order.subtotal,
+    discountTotal: order.discountTotal,
+    deliveryFee: order.deliveryFee,
+    currency: order.currency,
+    paymentStatus: order.paymentStatus,
+    paymentMethod: order.paymentMethod,
+    cashierConfirmed: order.paymentStatus === 'PAID' && order.paymentMethod !== 'STRIPE',
     cashierConfirmedAt: order.paidAt?.toISOString() ?? null,
     orderType: order.orderType,
     deliveryStatus: order.deliveryStatus,
@@ -452,7 +481,7 @@ function buildReceiptPayload(order: any) {
 router.get('/receipts', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
   const paidOrders = await prisma.order.findMany({
-    where: { customerId, paymentStatus: 'PAID' },
+    where: { customerId },
     include: { branch: { select: { name: true } }, assignedDriver: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -463,7 +492,12 @@ router.get('/receipts', async (req: Request, res: Response) => {
     branchName: order.branch?.name ?? null,
     dateTime: order.createdAt.toISOString(),
     totalAmount: order.total,
+    subtotal: order.subtotal,
+    discountTotal: order.discountTotal,
+    deliveryFee: order.deliveryFee,
+    currency: order.currency,
     paymentStatus: order.paymentStatus,
+    paymentMethod: order.paymentMethod,
     orderType: order.orderType,
     deliveryStatus: order.deliveryStatus,
     assignedDriverName: order.assignedDriver?.name ?? null,
@@ -499,11 +533,6 @@ router.get('/receipt/:orderId', async (req: Request, res: Response) => {
 
     if (order.customerId !== customerId) {
       res.status(403).json({ error: 'Unauthorized access to this receipt.' });
-      return;
-    }
-
-    if (order.paymentStatus !== 'PAID') {
-      res.status(400).json({ error: 'Receipt unavailable until payment is completed.' });
       return;
     }
 

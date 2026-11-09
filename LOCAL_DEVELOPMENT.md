@@ -88,6 +88,19 @@ The customer menu requests eligible bookings from the API and requires an explic
 
 The root SQLite API reads its configuration from the root `.env`. The frontend uses relative `/api` requests during development and the proxy in `frontend/vite.config.ts`. The nested `backend/` project reads a separate PostgreSQL configuration and must not be started for the local presentation app.
 
+Customer checkout continues to support cash without Stripe configuration.
+Online card checkout is enabled only when the root API's private `.env` has
+`STRIPE_SECRET_KEY=sk_test_...` and `STRIPE_WEBHOOK_SECRET=whsec_...`. These
+are server-only test-mode credentials. For local webhook testing, run the
+Stripe CLI forwarder to `http://127.0.0.1:3001/api/payments/stripe/webhook`,
+then put the CLI-provided signing secret in the root `.env`. Never expose
+either value to the frontend or commit them. The Stripe Dashboard must have
+test-mode Card payments enabled.
+
+The local payment schema migration has already been applied to the canonical
+SQLite database only after making a verified backup. Do not reapply it or run
+fresh-database seed commands against the presentation database.
+
 ## Database backup and restore
 
 The presentation database is `backend\prisma\dev.db`. Backups contain account data and password hashes: keep them local, outside the repository, and do not upload them to GitHub. Never restore over the live database while either service is running.

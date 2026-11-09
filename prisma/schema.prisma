@@ -39,7 +39,15 @@ enum OrderStatus {
 
 enum PaymentStatus {
   UNPAID
+  PENDING
   PAID
+  FAILED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  STRIPE
 }
 
 enum BookingStatus {
@@ -156,6 +164,16 @@ model Order {
   orderType            OrderType       @default(DINE_IN)
   deliveryStatus       DeliveryStatus?
   paymentStatus        PaymentStatus   @default(UNPAID)
+  paidAt               DateTime?
+  paymentMethod        PaymentMethod?
+  subtotal             Float           @default(0)
+  discountTotal        Float           @default(0)
+  deliveryFee          Float           @default(0)
+  currency             String          @default("EUR")
+  paymentAttemptId     String?
+  paymentSessionId     String?         @unique
+  paymentCheckoutUrl   String?
+  paymentSessionExpiresAt DateTime?
   recipientName        String?
   recipientPhone       String?
   deliveryAddress      String?
@@ -168,11 +186,23 @@ model Order {
   checkoutRequestId    String?         @unique
   total                Float           @default(0)
   items                OrderItem[]
+  paymentEvents        PaymentEvent[]
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
   @@index([assignedDriverId, deliveryStatus])
   @@index([branchId, orderType, deliveryStatus])
+}
+
+model PaymentEvent {
+  id              Int      @id @default(autoincrement())
+  providerEventId String   @unique
+  eventType       String
+  orderId         Int
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 model OrderItem {

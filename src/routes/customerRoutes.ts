@@ -6,6 +6,8 @@ import { verifyToken, requireRole } from '../middleware/auth.js';
 import { canReserveTable, validateBookingDetails } from '../lib/bookingValidation.js';
 import { getDineInBookingWindow, isDineInBookingEligible } from '../lib/dineInBooking.js';
 import { isSameCheckoutRequest, type CheckoutSnapshot } from '../lib/orderIdempotency.js';
+import { calculateCheckoutAmounts, roundPrice } from '../lib/checkoutPricing.js';
+import { getStripeClient } from '../lib/stripe.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['CUSTOMER']));
@@ -156,15 +158,16 @@ router.get('/orders', async (req: Request, res: Response) => {
 router.post('/orders', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
   const checkoutRequestId = req.get('Idempotency-Key');
-  if (checkoutRequestId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(checkoutRequestId)) {
-    res.status(400).json({ error: 'Idempotency-Key must be a UUID.' });
+  if (!checkoutRequestId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(checkoutRequestId)) {
+    res.status(400).json({ error: 'A UUID Idempotency-Key is required to prevent duplicate orders.' });
     return;
   }
-  const { bookingId: requestedBookingId, branchId: requestedBranchId, items, orderType: requestedOrderType } = req.body as {
+  const { bookingId: requestedBookingId, branchId: requestedBranchId, items, orderType: requestedOrderType, paymentMethod: requestedPaymentMethod } = req.body as {
     bookingId?: number;
     items?: { menuItemId: number; quantity: number }[];
     branchId?: number;
     orderType?: string;
+    paymentMethod?: string;
     recipientName?: string;
     recipientPhone?: string;
     deliveryAddress?: string;
@@ -178,6 +181,15 @@ router.post('/orders', async (req: Request, res: Response) => {
   };
 
   const orderTypes = ['DINE_IN', 'COLLECTION', 'DELIVERY'] as const;
+  if (requestedPaymentMethod !== undefined && requestedPaymentMethod !== 'CASH' && requestedPaymentMethod !== 'STRIPE') {
+    res.status(400).json({ error: 'paymentMethod must be CASH or STRIPE.' });
+    return;
+  }
+  const paymentMethod = requestedPaymentMethod ?? 'CASH';
+  if (paymentMethod === 'STRIPE' && !getStripeClient()) {
+    res.status(503).json({ error: 'Online card payments are not configured. Choose cash at the cashier.' });
+    return;
+  }
   if (requestedOrderType !== undefined && !orderTypes.some((type) => type === requestedOrderType)) {
     res.status(400).json({ error: 'orderType must be DINE_IN, COLLECTION, or DELIVERY.' });
     return;
@@ -287,14 +299,21 @@ router.post('/orders', async (req: Request, res: Response) => {
     return;
   }
 
-  const priceMap = Object.fromEntries(menuItems.map((item: { id: number; price: number }) => [item.id, item.price]));
-  const total = items.reduce((sum, item) => sum + (priceMap[item.menuItemId] ?? 0) * item.quantity, 0);
+  const priceMap = Object.fromEntries(menuItems.map((item: { id: number; price: number }) => [
+    item.id,
+    roundPrice(item.price),
+  ]));
+  const amounts = calculateCheckoutAmounts(items.map((item) => ({
+    ...item,
+    price: priceMap[item.menuItemId] ?? 0,
+  })), orderType);
 
   const requestedCheckout: CheckoutSnapshot = {
     customerId,
     branchId: resolvedBranchId,
     bookingId: orderType === 'DINE_IN' ? bookingId ?? null : null,
     orderType,
+    paymentMethod,
     recipientName: deliveryDetails?.recipientName ?? null,
     recipientPhone: deliveryDetails?.recipientPhone ?? null,
     deliveryAddress: deliveryDetails?.deliveryAddress ?? null,
@@ -391,6 +410,7 @@ router.post('/orders', async (req: Request, res: Response) => {
           bookingId: orderType === 'DINE_IN' ? bookingId : undefined,
           branchId: resolvedBranchId,
           orderType,
+          paymentMethod,
           checkoutRequestId,
           ...(orderType === 'DELIVERY'
             ? {
@@ -400,7 +420,11 @@ router.post('/orders', async (req: Request, res: Response) => {
             }
             : {}),
           ...deliveryDetails,
-          total,
+          subtotal: amounts.subtotal,
+          discountTotal: amounts.discountTotal,
+          deliveryFee: amounts.deliveryFee,
+          currency: amounts.currency,
+          total: amounts.total,
           items: {
             create: items.map((item) => ({
               menuItemId: item.menuItemId,
@@ -453,7 +477,7 @@ function buildReceiptNumber(order: { id: number; createdAt: Date }) {
 
 router.get('/receipts', async (req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
-    where: { customerId: req.user!.id, paymentStatus: 'PAID' },
+    where: { customerId: req.user!.id },
     include: {
       branch: { select: { name: true } },
       assignedDriver: { select: { name: true } },
@@ -467,7 +491,12 @@ router.get('/receipts', async (req: Request, res: Response) => {
     branchName: order.branch.name,
     dateTime: order.createdAt.toISOString(),
     totalAmount: order.total,
+    subtotal: order.subtotal,
+    discountTotal: order.discountTotal,
+    deliveryFee: order.deliveryFee,
+    currency: order.currency,
     paymentStatus: order.paymentStatus,
+    paymentMethod: order.paymentMethod,
     orderType: order.orderType,
     deliveryStatus: order.deliveryStatus,
     assignedDriverName: order.assignedDriver?.name ?? null,
@@ -483,7 +512,7 @@ router.get('/receipt/:orderId', async (req: Request, res: Response) => {
   }
 
   const order = await prisma.order.findFirst({
-    where: { id: orderId, customerId: req.user!.id, paymentStatus: 'PAID' },
+    where: { id: orderId, customerId: req.user!.id },
     include: {
       items: { include: { menuItem: true } },
       customer: { select: { name: true } },
@@ -510,14 +539,19 @@ router.get('/receipt/:orderId', async (req: Request, res: Response) => {
       unitPrice: item.unitPrice,
       lineTotal: item.unitPrice * item.quantity,
     })),
+    subtotal: order.subtotal,
+    discountTotal: order.discountTotal,
+    deliveryFee: order.deliveryFee,
+    currency: order.currency,
     totalAmount: order.total,
     paymentStatus: order.paymentStatus,
+    paymentMethod: order.paymentMethod,
     orderType: order.orderType,
     deliveryStatus: order.deliveryStatus,
     assignedDriverName: order.assignedDriver?.name ?? null,
     deliveredAt: order.deliveredAt?.toISOString() ?? null,
-    cashierConfirmed: true,
-    cashierConfirmedAt: null,
+    cashierConfirmed: order.paymentStatus === 'PAID' && order.paymentMethod !== 'STRIPE',
+    cashierConfirmedAt: order.paidAt?.toISOString() ?? null,
     thankYou: 'Thank you for dining with us at Steakz!',
   });
 });

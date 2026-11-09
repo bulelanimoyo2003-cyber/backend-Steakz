@@ -8,7 +8,7 @@
     "build": "tsc --build",
     "start": "node dist/index.js",
     "db:seed": "tsx scripts/seed.ts",
-    "test": "tsx --test src/middleware/auth.test.ts src/lib/bookingValidation.test.ts src/lib/dineInBooking.test.ts src/lib/deliveryWorkflow.test.ts src/lib/customerDashboard.test.ts src/lib/orderIdempotency.test.ts",
+    "test": "tsx --test src/middleware/auth.test.ts src/lib/bookingValidation.test.ts src/lib/dineInBooking.test.ts src/lib/deliveryWorkflow.test.ts src/lib/customerDashboard.test.ts src/lib/orderIdempotency.test.ts src/lib/checkoutPricing.test.ts",
     "test:delivery-accounts": "node --test scripts/setup_presentation_delivery_accounts.test.cjs",
     "test:presentation-passwords": "node --test scripts/set_presentation_passwords.test.cjs",
     "test:e2e:delivery:sqlite": "node scripts/e2e_delivery_workflow_test.cjs",
@@ -26,7 +26,8 @@
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^5.2.1",
-    "jsonwebtoken": "^9.0.3"
+    "jsonwebtoken": "^9.0.3",
+    "stripe": "^23.1.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",

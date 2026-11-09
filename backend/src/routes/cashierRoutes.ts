@@ -3,6 +3,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole, requireBranch } from '../middleware/auth.js';
+import { calculateCheckoutAmounts, roundPrice } from '../lib/checkoutPricing.js';
 
 const logFile = 'cashier_debug.log';
 function debugLog(message: string) {
@@ -57,7 +58,6 @@ router.post('/orders', async (req: Request, res: Response) => {
   };
 
   try {
-    debugLog(`[CASHIER CREATE ORDER] incoming body: ${JSON.stringify(req.body)}`);
     if (!items || !Array.isArray(items) || items.length === 0) {
       res.status(400).json({ error: 'At least one item is required.' });
       return;
@@ -66,18 +66,18 @@ router.post('/orders', async (req: Request, res: Response) => {
     // Normalize and validate items
     const normItems = items.map((it, idx) => {
       const menuItemId = Number(it.menuItemId);
-      const quantity = Math.max(1, Math.floor(Number(it.quantity) || 0));
+      const quantity = Number(it.quantity);
       if (!Number.isFinite(menuItemId) || menuItemId <= 0) {
         throw new Error(`Invalid menuItemId at index ${idx}`);
       }
-      if (!Number.isInteger(quantity) || quantity <= 0) {
+      if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 50) {
         throw new Error(`Invalid quantity for menuItemId ${menuItemId}`);
       }
       return { menuItemId, quantity };
     });
 
     const menuItems = await prisma.menuItem.findMany({
-      where: { id: { in: normItems.map((item) => item.menuItemId) }, branchId },
+      where: { id: { in: normItems.map((item) => item.menuItemId) }, branchId, isAvailable: true },
       select: { id: true, price: true },
     });
 
@@ -86,15 +86,26 @@ router.post('/orders', async (req: Request, res: Response) => {
       return;
     }
 
-    const priceMap = Object.fromEntries(menuItems.map((item: { id: number; price: number }) => [item.id, item.price]));
-    const total = normItems.reduce((sum, item) => sum + (priceMap[item.menuItemId] ?? 0) * item.quantity, 0);
+    const priceMap = Object.fromEntries(menuItems.map((item: { id: number; price: number }) => [
+      item.id,
+      roundPrice(item.price),
+    ]));
+    const amounts = calculateCheckoutAmounts(normItems.map((item) => ({
+      ...item,
+      price: priceMap[item.menuItemId] ?? 0,
+    })), 'COLLECTION');
 
     const order = await prisma.order.create({
       data: {
         branchId,
+        paymentMethod: 'CASH',
         customerId: customerId ? Number(customerId) : null,
         bookingId: bookingId ? Number(bookingId) : null,
-        total,
+        subtotal: amounts.subtotal,
+        discountTotal: amounts.discountTotal,
+        deliveryFee: amounts.deliveryFee,
+        currency: amounts.currency,
+        total: amounts.total,
         items: {
           create: normItems.map((item) => ({
             menuItemId: item.menuItemId,
@@ -122,7 +133,17 @@ router.get('/orders', async (req: Request, res: Response) => {
     debugLog(`[CASHIER ORDERS] hit branchId=${branchId}, user=${req.user?.id}`);
     const orders = await prisma.order.findMany({
       where: { branchId },
-      include: { items: { include: { menuItem: true } } },
+      select: {
+        id: true,
+        total: true,
+        status: true,
+        paymentStatus: true,
+        paymentMethod: true,
+        orderType: true,
+        deliveryStatus: true,
+        createdAt: true,
+        items: { select: { quantity: true, unitPrice: true, menuItem: { select: { name: true } } } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     debugLog(`[CASHIER ORDERS] found ${orders.length} orders`);
@@ -153,9 +174,17 @@ router.patch('/orders/:id/pay', async (req: Request, res: Response) => {
       res.status(403).json({ error: 'Order not found in your branch.' });
       return;
     }
+    if (order.paymentMethod === 'STRIPE') {
+      res.status(409).json({ error: 'Online payments can only be confirmed by the verified payment provider.' });
+      return;
+    }
+    if (order.paymentStatus === 'PAID') {
+      res.json(order);
+      return;
+    }
     const paidAt = new Date();
     const updatedCount = await prisma.order.updateMany({
-      where: { id, branchId, paymentStatus: 'UNPAID' },
+      where: { id, branchId, paymentStatus: 'UNPAID', OR: [{ paymentMethod: 'CASH' }, { paymentMethod: null }] },
       data: { paymentStatus: 'PAID', paidAt },
     });
     const updated = await prisma.order.findUnique({ where: { id } });
@@ -188,9 +217,30 @@ router.patch('/orders/:id/deliver', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'Delivery orders must be marked delivered by the assigned driver.' });
       return;
     }
-    const updated = await prisma.order.update({ where: { id }, data: { status: 'DELIVERED' } });
-    await completeBookingIfOrderPaidAndDelivered(updated.id);
-    res.json(updated);
+    if (order.orderType === 'COLLECTION' && (order.status !== 'DONE' || order.paymentStatus !== 'PAID')) {
+      res.status(409).json({ error: 'Collection is only available after the kitchen marks the order ready and payment is confirmed.' });
+      return;
+    }
+    const updated = await prisma.order.updateMany({
+      where: {
+        id,
+        branchId,
+        orderType: { not: 'DELIVERY' },
+        ...(order.orderType === 'COLLECTION' ? { status: 'DONE', paymentStatus: 'PAID' } : {}),
+      },
+      data: { status: 'DELIVERED' },
+    });
+    if (updated.count !== 1) {
+      res.status(409).json({ error: 'Order status changed or order not found in your branch.' });
+      return;
+    }
+    const deliveredOrder = await prisma.order.findUnique({ where: { id } });
+    if (!deliveredOrder) {
+      res.status(404).json({ error: 'Order not found.' });
+      return;
+    }
+    await completeBookingIfOrderPaidAndDelivered(deliveredOrder.id);
+    res.json(deliveredOrder);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update order delivery status.' });
   }

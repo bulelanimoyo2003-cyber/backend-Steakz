@@ -23,6 +23,7 @@ interface Order {
   total: number;
   status: string;
   orderType: string;
+  paymentMethod?: string | null;
   paymentStatus?: string;
   createdAt: string;
   items: OrderItem[];
@@ -214,19 +215,22 @@ export default function CashierDashboard() {
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <span className={`badge badge-${order.status.toLowerCase()}`}>{order.status}</span>
                   <span className={`badge ${order.paymentStatus === 'PAID' ? 'badge-success' : 'badge-warning'}`}>
-                    {order.paymentStatus || 'UNPAID'}
+                    {order.paymentStatus === 'PAID' ? 'Paid'
+                      : order.paymentMethod === 'STRIPE' ? 'Online payment pending'
+                        : 'Awaiting cashier confirmation'}
                   </span>
                 </div>
               </div>
               <span className="driver-branch">{order.orderType.replace('_', ' ')}</span>
               <span className="price" style={{ display: 'block', marginTop: '0.3rem' }}>€{order.total.toFixed(2)}</span>
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
-                {order.paymentStatus !== 'PAID' && (
+                {order.paymentStatus === 'UNPAID' && order.paymentMethod !== 'STRIPE' && (
                   <button className="btn btn-outline btn-sm" type="button" onClick={() => markPaid(order.id)}>
                     Mark Paid
                   </button>
                 )}
-                {order.status === 'DONE' && order.orderType !== 'DELIVERY' && (
+                {order.status === 'DONE' && order.orderType !== 'DELIVERY'
+                  && (order.orderType !== 'COLLECTION' || order.paymentStatus === 'PAID') && (
                   <button className="btn btn-outline btn-sm" type="button" onClick={() => markDelivered(order.id)}>
                     Mark Delivered
                   </button>

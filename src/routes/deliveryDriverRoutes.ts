@@ -28,6 +28,7 @@ const driverOrderSelect = {
   status: true,
   orderType: true,
   paymentStatus: true,
+  paymentMethod: true,
   deliveryStatus: true,
   assignedDriverId: true,
   recipientName: true,
@@ -94,7 +95,9 @@ router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
   if (!canPickUpDelivery(visibleOrder)) {
     const pending = [];
     if (visibleOrder.status !== 'DONE') pending.push('the kitchen finishes preparing the order');
-    if (visibleOrder.paymentStatus !== 'PAID') pending.push('the cashier confirms payment');
+    if (visibleOrder.paymentStatus !== 'PAID') {
+      pending.push(visibleOrder.paymentMethod === 'STRIPE' ? 'verified online payment' : 'the cashier confirms payment');
+    }
     res.status(409).json({
       error: pending.length
         ? `Delivery cannot be collected until ${pending.join(' and ')}.`
@@ -125,7 +128,9 @@ router.patch('/orders/:id/pickup', async (req: Request, res: Response) => {
     }
     const pending = [];
     if (currentOrder?.status !== 'DONE') pending.push('the kitchen finishes preparing the order');
-    if (currentOrder?.paymentStatus !== 'PAID') pending.push('the cashier confirms payment');
+    if (currentOrder?.paymentStatus !== 'PAID') {
+      pending.push(currentOrder?.paymentMethod === 'STRIPE' ? 'verified online payment' : 'the cashier confirms payment');
+    }
     res.status(409).json({
       error: pending.length
         ? `Delivery cannot be collected until ${pending.join(' and ')}.`
