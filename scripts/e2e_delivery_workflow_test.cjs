@@ -202,7 +202,11 @@ function createApi(baseUrl) {
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
     if (branchId !== undefined) headers['X-Branch-Id'] = String(branchId);
-    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    if (method === 'POST' && route === '/customer/orders') {
+      headers['Idempotency-Key'] = idempotencyKey ?? crypto.randomUUID();
+    } else if (idempotencyKey) {
+      headers['Idempotency-Key'] = idempotencyKey;
+    }
     if (body) headers['Content-Type'] = 'application/json';
     const response = await fetch(new URL(`/api${route}`, baseUrl), {
       method,

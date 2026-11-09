@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { withIsolatedApi } from './e2e_test_environment.js';
 
@@ -10,6 +11,7 @@ async function request(baseUrl, method, endpoint, body, token, branchId) {
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...(method === 'POST' && endpoint === '/customer/orders' ? { 'Idempotency-Key': randomUUID() } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(branchId ? { 'X-Branch-Id': String(branchId) } : {}),
     },
