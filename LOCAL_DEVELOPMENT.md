@@ -4,6 +4,10 @@ The presentation app is this checkout at `C:\Users\DELL\Downloads\Steakz`, branc
 
 The nested `backend/` directory contains the separate PostgreSQL application source, `.env`, Prisma schema, and generated client. Its `npm run dev` is intentionally wired to the root local SQLite launcher; the PostgreSQL source/build/start and database scripts remain separate. Do not run those PostgreSQL entrypoints for local presentation work. The root and frontend development servers do not seed, reset, or clean the database on startup.
 
+To enable the local-only control, add `LOCAL_DEMO_ORDER_HISTORY_ENABLED=true` to the root `.env` and restart the API. An administrator can then use **Admin Panel → Local demo order history → Hide older orders now**. This records a cutoff in the ignored `.steakz-demo-order-history.json` file; orders before it disappear from customer and staff order lists and order totals, except orders not yet delivered or cancelled. No order rows or related records are deleted. **Show older history** clears the cutoff immediately. The setting is only enabled for the non-production SQLite app, not the nested PostgreSQL application.
+
+The isolated end-to-end check for the cutoff, customer/cashier visibility, order creation, API restart persistence, and history restore is `npm run test:e2e:demo-history`. It clones the local SQLite database into a temporary directory and never writes test orders to the persistent presentation database.
+
 The local AppData delivery-preview SQLite files are preserved snapshots, not the live presentation database. They contain different account, branch-assignment, and order records; do not copy one over the project database. Explicit setup commands are guarded to modify only the root project database.
 
 ## Reopen and start the same app

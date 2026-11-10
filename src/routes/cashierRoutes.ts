@@ -4,6 +4,7 @@ import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole, requireBranch } from '../middleware/auth.js';
 import { calculateCheckoutAmounts, roundPrice } from '../lib/checkoutPricing.js';
+import { getOrderHistoryWhere } from '../lib/localDemoOrderHistory.js';
 
 const logFile = 'cashier_debug.log';
 function debugLog(message: string) {
@@ -172,7 +173,7 @@ router.get('/orders', async (req: Request, res: Response) => {
     const branchId = req.user!.branchId!;
     debugLog(`[CASHIER ORDERS] hit branchId=${branchId}, user=${req.user?.id}`);
     const orders = await prisma.order.findMany({
-      where: { branchId },
+      where: { ...(await getOrderHistoryWhere()), branchId },
       select: {
         id: true,
         total: true,

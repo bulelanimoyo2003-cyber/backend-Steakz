@@ -8,6 +8,7 @@ import { getBookingOverlapRange, getDineInBookingWindow, isDineInBookingEligible
 import { isSameCheckoutRequest, type CheckoutSnapshot } from '../lib/orderIdempotency.js';
 import { calculateCheckoutAmounts, roundPrice } from '../lib/checkoutPricing.js';
 import { getStripeClient } from '../lib/stripe.js';
+import { getOrderHistoryWhere } from '../lib/localDemoOrderHistory.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['CUSTOMER']));
@@ -153,7 +154,7 @@ router.delete('/bookings/:id', async (req: Request, res: Response) => {
 router.get('/orders', async (req: Request, res: Response) => {
   const customerId = req.user!.id;
   const orders = await prisma.order.findMany({
-    where: { customerId },
+    where: { customerId, ...(await getOrderHistoryWhere()) },
     include: {
       items: { include: { menuItem: true } },
       branch: { select: { name: true } },
@@ -508,7 +509,11 @@ function buildReceiptNumber(order: { id: number; createdAt: Date }) {
 
 router.get('/receipts', async (req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
-    where: { customerId: req.user!.id, paymentStatus: 'PAID' },
+    where: {
+      ...(await getOrderHistoryWhere()),
+      customerId: req.user!.id,
+      paymentStatus: 'PAID',
+    },
     include: {
       branch: { select: { name: true } },
       assignedDriver: { select: { name: true } },

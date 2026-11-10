@@ -7,6 +7,7 @@ import {
   canCompleteDelivery,
   canPickUpDelivery,
 } from '../lib/deliveryWorkflow.js';
+import { getOrderHistoryWhere } from '../lib/localDemoOrderHistory.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['DELIVERY_DRIVER']), requireBranch);
@@ -63,6 +64,7 @@ router.get('/profile', async (req: Request, res: Response) => {
 router.get('/orders', async (req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
     where: {
+      ...(await getOrderHistoryWhere()),
       orderType: 'DELIVERY',
       assignedDriverId: req.user!.id,
       branchId: req.user!.branchId!,

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole, requireBranch } from '../middleware/auth.js';
+import { getOrderHistoryWhere } from '../lib/localDemoOrderHistory.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['CHEF']), requireBranch);
@@ -17,7 +18,11 @@ router.get('/orders', async (req: Request, res: Response) => {
   try {
     const branchId = req.user!.branchId!;
     const orders = await prisma.order.findMany({
-      where: { branchId, status: { in: ['PENDING', 'PREPARING'] } },
+      where: {
+        ...(await getOrderHistoryWhere()),
+        branchId,
+        status: { in: ['PENDING', 'PREPARING'] },
+      },
       select: chefOrderSelect,
       orderBy: { createdAt: 'asc' },
     });

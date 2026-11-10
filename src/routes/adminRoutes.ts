@@ -5,6 +5,12 @@ import { Prisma } from '@prisma/client';
 import type { Role } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
+import {
+  createActiveOrderWhere,
+  isLocalDemoOrderHistoryEnabled,
+  readLocalDemoOrderCutoff,
+  setLocalDemoOrderCutoff,
+} from '../lib/localDemoOrderHistory.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['ADMIN']));
@@ -18,6 +24,41 @@ const VALID_ROLES: readonly string[] = [
   'CUSTOMER',
 ];
 const BRANCH_ROLES = ['BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER'];
+
+router.get('/local-demo-order-history', async (_req: Request, res: Response) => {
+  const enabled = isLocalDemoOrderHistoryEnabled();
+  const cutoffAt = enabled ? await readLocalDemoOrderCutoff() : null;
+  const activeOlderOrderCount = cutoffAt
+    ? await prisma.order.count({
+      where: {
+        AND: [{ createdAt: { lt: cutoffAt } }, createActiveOrderWhere()],
+      },
+    })
+    : 0;
+  res.json({ enabled, cutoffAt: cutoffAt?.toISOString() ?? null, activeOlderOrderCount });
+});
+
+router.put('/local-demo-order-history', async (req: Request, res: Response) => {
+  if (!isLocalDemoOrderHistoryEnabled()) {
+    res.status(404).json({ error: 'Local demo order history is not enabled for this system.' });
+    return;
+  }
+  if (typeof req.body?.hideOlderOrders !== 'boolean') {
+    res.status(400).json({ error: 'hideOlderOrders must be a boolean.' });
+    return;
+  }
+
+  const cutoffAt = req.body.hideOlderOrders ? new Date() : null;
+  await setLocalDemoOrderCutoff(cutoffAt);
+  const activeOlderOrderCount = cutoffAt
+    ? await prisma.order.count({
+      where: {
+        AND: [{ createdAt: { lt: cutoffAt } }, createActiveOrderWhere()],
+      },
+    })
+    : 0;
+  res.json({ enabled: true, cutoffAt: cutoffAt?.toISOString() ?? null, activeOlderOrderCount });
+});
 
 router.post('/branches', async (req: Request, res: Response) => {
   const { name, address, phone } = req.body as {

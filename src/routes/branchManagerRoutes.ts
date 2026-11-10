@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole, requireManagerBranch } from '../middleware/auth.js';
+import { getOrderHistoryWhere } from '../lib/localDemoOrderHistory.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['BRANCH_MANAGER']));
@@ -21,9 +22,18 @@ router.use(requireManagerBranch);
 
 router.get('/overview', async (req: Request, res: Response) => {
   const branchId = req.managerBranchId!;
+  const orderHistoryWhere = await getOrderHistoryWhere();
   const branch = await prisma.branch.findUnique({
     where: { id: branchId },
-    include: { _count: { select: { orders: true, users: true, tables: true } } },
+    include: {
+      _count: {
+        select: {
+          orders: { where: orderHistoryWhere },
+          users: true,
+          tables: true,
+        },
+      },
+    },
   });
   if (!branch) {
     res.status(404).json({ error: 'Branch not found.' });
@@ -35,7 +45,7 @@ router.get('/overview', async (req: Request, res: Response) => {
 router.get('/orders', async (req: Request, res: Response) => {
   const branchId = req.managerBranchId!;
   const orders = await prisma.order.findMany({
-    where: { branchId },
+    where: { ...(await getOrderHistoryWhere()), branchId },
     include: {
       items: { include: { menuItem: true } },
       customer: { select: { name: true } },
@@ -190,7 +200,11 @@ router.patch('/tables/:id/status', async (req: Request, res: Response) => {
 router.get('/sales', async (req: Request, res: Response) => {
   const branchId = req.managerBranchId!;
   const result = await prisma.order.aggregate({
-    where: { branchId, status: { in: ['DONE', 'DELIVERED'] } },
+    where: {
+      ...(await getOrderHistoryWhere()),
+      branchId,
+      status: { in: ['DONE', 'DELIVERED'] },
+    },
     _sum: { total: true },
     _count: { id: true },
   });

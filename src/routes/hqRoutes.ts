@@ -2,13 +2,23 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole } from '../middleware/auth.js';
+import { getOrderHistoryWhere } from '../lib/localDemoOrderHistory.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['HQ_MANAGER', 'ADMIN']));
 
 router.get('/overview', async (_req: Request, res: Response) => {
+  const orderHistoryWhere = await getOrderHistoryWhere();
   const branches = await prisma.branch.findMany({
-    include: { _count: { select: { orders: true, users: true, tables: true } } },
+    include: {
+      _count: {
+        select: {
+          orders: { where: orderHistoryWhere },
+          users: true,
+          tables: true,
+        },
+      },
+    },
     orderBy: { id: 'asc' },
   });
   res.json(branches);
@@ -16,6 +26,7 @@ router.get('/overview', async (_req: Request, res: Response) => {
 
 router.get('/orders', async (_req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
+    where: await getOrderHistoryWhere(),
     include: {
       branch: { select: { id: true, name: true } },
       items: { include: { menuItem: true } },
@@ -48,7 +59,10 @@ router.get('/sales', async (_req: Request, res: Response) => {
     by: ['branchId'],
     _sum: { total: true },
     _count: { id: true },
-    where: { status: { in: ['DONE', 'DELIVERED'] } },
+    where: {
+      ...(await getOrderHistoryWhere()),
+      status: { in: ['DONE', 'DELIVERED'] },
+    },
   });
 
   const branches = await prisma.branch.findMany({ select: { id: true, name: true } });
