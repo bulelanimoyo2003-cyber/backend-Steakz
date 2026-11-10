@@ -19,20 +19,11 @@ interface Branch {
   isActive: boolean;
 }
 
-interface DemoOrderHistorySettings {
-  enabled: boolean;
-  cutoffAt: string | null;
-  activeOlderOrderCount: number;
-}
-
 const ROLES = ['ADMIN', 'HQ_MANAGER', 'BRANCH_MANAGER', 'CHEF', 'CASHIER', 'DELIVERY_DRIVER', 'CUSTOMER'];
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [demoHistory, setDemoHistory] = useState<DemoOrderHistorySettings | null>(null);
-  const [demoHistoryError, setDemoHistoryError] = useState('');
-  const [demoHistoryBusy, setDemoHistoryBusy] = useState(false);
   const [uName, setUName] = useState('');
   const [uEmail, setUEmail] = useState('');
   const [uPass, setUPass] = useState('');
@@ -44,10 +35,7 @@ export default function AdminDashboard() {
   const [bAddress, setBAddress] = useState('');
   const [bMsg, setBMsg] = useState('');
 
-  useEffect(() => {
-    loadAll();
-    void loadDemoHistory();
-  }, []);
+  useEffect(() => { loadAll(); }, []);
 
   async function loadAll() {
     try {
@@ -56,32 +44,6 @@ export default function AdminDashboard() {
       setBranches(branchesResponse.data);
     } catch {
       setUMsg('Unable to load admin data.');
-    }
-  }
-
-  async function loadDemoHistory() {
-    try {
-      const response = await api.get<DemoOrderHistorySettings>('/admin/local-demo-order-history');
-      setDemoHistory(response.data);
-      setDemoHistoryError('');
-    } catch {
-      setDemoHistoryError('Unable to load the local demo order-history setting.');
-    }
-  }
-
-  async function toggleDemoHistory(hideOlderOrders: boolean) {
-    setDemoHistoryBusy(true);
-    setDemoHistoryError('');
-    try {
-      const response = await api.put<DemoOrderHistorySettings>(
-        '/admin/local-demo-order-history',
-        { hideOlderOrders },
-      );
-      setDemoHistory(response.data);
-    } catch {
-      setDemoHistoryError('Unable to update the local demo order-history setting.');
-    } finally {
-      setDemoHistoryBusy(false);
     }
   }
 
@@ -159,35 +121,6 @@ export default function AdminDashboard() {
         <h1>Admin Panel</h1>
         <p>System-wide user and location management</p>
       </div>
-
-      {demoHistory?.enabled && (
-        <section className="card" aria-labelledby="demo-history-title" style={{ marginBottom: '2rem' }}>
-          <h2 id="demo-history-title">Local demo order history</h2>
-          <p>
-            {demoHistory.cutoffAt
-              ? `Orders created before ${new Date(demoHistory.cutoffAt).toLocaleString()} are hidden from order lists and totals.`
-              : 'All order history is currently shown.'}
-            {' '}Active orders remain visible, and no order records are deleted.
-          </p>
-          {demoHistory.cutoffAt && demoHistory.activeOlderOrderCount > 0 && (
-            <p role="status">
-              {demoHistory.activeOlderOrderCount} older active {demoHistory.activeOlderOrderCount === 1 ? 'order remains' : 'orders remain'} visible until completed.
-            </p>
-          )}
-          {demoHistoryError && <div className="alert alert-error" role="alert">{demoHistoryError}</div>}
-          <button
-            className={demoHistory.cutoffAt ? 'btn btn-outline' : 'btn btn-primary'}
-            type="button"
-            disabled={demoHistoryBusy}
-            onClick={() => void toggleDemoHistory(!demoHistory.cutoffAt)}
-          >
-            {demoHistory.cutoffAt ? 'Show older history' : 'Hide older orders now'}
-          </button>
-        </section>
-      )}
-      {!demoHistory && demoHistoryError && (
-        <div className="alert alert-error" role="alert">{demoHistoryError}</div>
-      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginBottom: '2.5rem' }}>
         <div className="card">

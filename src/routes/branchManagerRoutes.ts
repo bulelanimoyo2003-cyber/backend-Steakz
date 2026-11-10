@@ -4,7 +4,6 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole, requireManagerBranch } from '../middleware/auth.js';
-import { getOrderHistoryWhere } from '../lib/localDemoOrderHistory.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['BRANCH_MANAGER']));
@@ -22,30 +21,21 @@ router.use(requireManagerBranch);
 
 router.get('/overview', async (req: Request, res: Response) => {
   const branchId = req.managerBranchId!;
-  const orderHistoryWhere = await getOrderHistoryWhere();
   const branch = await prisma.branch.findUnique({
     where: { id: branchId },
-    include: {
-      _count: {
-        select: {
-          orders: { where: orderHistoryWhere },
-          users: true,
-          tables: true,
-        },
-      },
-    },
+    include: { _count: { select: { orders: true, users: true, tables: true } } },
   });
   if (!branch) {
     res.status(404).json({ error: 'Branch not found.' });
     return;
   }
-  res.json(branch);
+  res.set('Cache-Control', 'no-store').json(branch);
 });
 
 router.get('/orders', async (req: Request, res: Response) => {
   const branchId = req.managerBranchId!;
   const orders = await prisma.order.findMany({
-    where: { ...(await getOrderHistoryWhere()), branchId },
+    where: { branchId },
     include: {
       items: { include: { menuItem: true } },
       customer: { select: { name: true } },
@@ -54,7 +44,7 @@ router.get('/orders', async (req: Request, res: Response) => {
     },
     orderBy: { createdAt: 'desc' },
   });
-  res.json(orders);
+  res.set('Cache-Control', 'no-store').json(orders);
 });
 
 router.get('/staff', async (req: Request, res: Response) => {
@@ -200,15 +190,11 @@ router.patch('/tables/:id/status', async (req: Request, res: Response) => {
 router.get('/sales', async (req: Request, res: Response) => {
   const branchId = req.managerBranchId!;
   const result = await prisma.order.aggregate({
-    where: {
-      ...(await getOrderHistoryWhere()),
-      branchId,
-      status: { in: ['DONE', 'DELIVERED'] },
-    },
+    where: { branchId, status: { in: ['DONE', 'DELIVERED'] } },
     _sum: { total: true },
     _count: { id: true },
   });
-  res.json({ totalSales: result._sum.total ?? 0, orderCount: result._count.id });
+  res.set('Cache-Control', 'no-store').json({ totalSales: result._sum.total ?? 0, orderCount: result._count.id });
 });
 
 router.get('/menu', async (req: Request, res: Response) => {

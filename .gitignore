@@ -41,8 +41,5 @@ logs/
 *.backup
 *.backup.*
 *.dump
-.steakz-demo-order-history.json
-.steakz-demo-order-history.json.*.tmp
-
 # Generated Prisma Client
 backend/src/generated/

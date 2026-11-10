@@ -2,7 +2,6 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import prisma from '../lib/prisma.js';
 import { verifyToken, requireRole, requireBranch } from '../middleware/auth.js';
-import { getOrderHistoryWhere } from '../lib/localDemoOrderHistory.js';
 
 const router = Router();
 router.use(verifyToken, requireRole(['CHEF']), requireBranch);
@@ -18,15 +17,11 @@ router.get('/orders', async (req: Request, res: Response) => {
   try {
     const branchId = req.user!.branchId!;
     const orders = await prisma.order.findMany({
-      where: {
-        ...(await getOrderHistoryWhere()),
-        branchId,
-        status: { in: ['PENDING', 'PREPARING'] },
-      },
+      where: { branchId, status: { in: ['PENDING', 'PREPARING'] } },
       select: chefOrderSelect,
       orderBy: { createdAt: 'asc' },
     });
-    res.json(orders);
+    res.set('Cache-Control', 'no-store').json(orders);
   } catch (error) {
     console.error('[CHEF ORDERS] error', error);
     res.status(500).json({ error: 'Failed to load chef orders.' });
